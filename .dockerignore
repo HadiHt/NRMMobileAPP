@@ -1,0 +1,10 @@
+.git
+.expo
+node_modules
+dist
+.vscode
+npm-debug.log
+.env
+.env.*
+Dockerfile
+.dockerignore
