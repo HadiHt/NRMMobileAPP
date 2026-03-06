@@ -20,6 +20,9 @@ FROM nginx:alpine
 # Copy the static web build from the builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Overwrite the default Nginx config with our custom SPA routing config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
 # Expose port 80
 EXPOSE 80
 
