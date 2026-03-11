@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { WebView, WebViewNavigation } from 'react-native-webview';
 import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
+import { TokenStorage } from '../auth/TokenStorage';
 import { Colors, Typography, Spacing, BorderRadius } from '../theme';
 
 const WFM_BASE_URL = 'https://wfm-w4-test.azurewebsites.net/gdi-demo2';
@@ -35,7 +35,7 @@ export default function FormioWebViewScreen({ initialUrl, taskId }: Props) {
      * can pick it up (if it uses localStorage-based auth).
      */
     const getInjectedJavaScript = useCallback(async () => {
-        const token = await SecureStore.getItemAsync(TOKEN_KEY);
+        const token = await TokenStorage.getItemAsync(TOKEN_KEY);
         if (!token) return '';
 
         return `
@@ -111,46 +111,55 @@ export default function FormioWebViewScreen({ initialUrl, taskId }: Props) {
                 </TouchableOpacity>
             </View>
 
-            {/* WebView */}
-            <WebView
-                ref={webViewRef}
-                source={{ uri: targetUrl }}
-                style={styles.webview}
-                onNavigationStateChange={handleNavigationStateChange}
-                onLoadStart={() => setLoading(true)}
-                onLoadEnd={() => setLoading(false)}
-                injectedJavaScript={injectedJS}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                startInLoadingState={true}
-                allowsBackForwardNavigationGestures={true}
-                sharedCookiesEnabled={true}
-                thirdPartyCookiesEnabled={true}
-                cacheEnabled={true}
-                renderLoading={() => (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator size="large" color={Colors.accent} />
-                        <Text style={styles.loadingText}>Loading Form.io...</Text>
-                    </View>
-                )}
-                renderError={(errorDomain, errorCode, errorDesc) => (
-                    <View style={styles.errorContainer}>
-                        <Ionicons name="cloud-offline-outline" size={48} color={Colors.error} />
-                        <Text style={styles.errorTitle}>Failed to load</Text>
-                        <Text style={styles.errorDesc}>{errorDesc}</Text>
-                        <TouchableOpacity style={styles.retryButton} onPress={reload}>
-                            <Text style={styles.retryText}>Retry</Text>
-                        </TouchableOpacity>
-                    </View>
-                )}
-                onMessage={(event) => {
-                    // Handle messages from the WebView (e.g. form submission)
-                    try {
-                        const data = JSON.parse(event.nativeEvent.data);
-                        console.log('[WebView Message]', data);
-                    } catch { }
-                }}
-            />
+            {/* WebView / iframe */}
+            {Platform.OS === 'web' ? (
+                <View style={{ flex: 1 }}>
+                    <iframe
+                        src={targetUrl}
+                        style={{ width: '100%', height: '100%', border: 'none' }}
+                        allow="clipboard-read; clipboard-write"
+                    />
+                </View>
+            ) : (
+                <WebView
+                    ref={webViewRef}
+                    source={{ uri: targetUrl }}
+                    style={styles.webview}
+                    onNavigationStateChange={handleNavigationStateChange}
+                    onLoadStart={() => setLoading(true)}
+                    onLoadEnd={() => setLoading(false)}
+                    injectedJavaScript={injectedJS}
+                    javaScriptEnabled={true}
+                    domStorageEnabled={true}
+                    startInLoadingState={true}
+                    allowsBackForwardNavigationGestures={true}
+                    sharedCookiesEnabled={true}
+                    thirdPartyCookiesEnabled={true}
+                    cacheEnabled={true}
+                    renderLoading={() => (
+                        <View style={styles.loadingContainer}>
+                            <ActivityIndicator size="large" color={Colors.accent} />
+                            <Text style={styles.loadingText}>Loading Form.io...</Text>
+                        </View>
+                    )}
+                    renderError={(errorDomain, errorCode, errorDesc) => (
+                        <View style={styles.errorContainer}>
+                            <Ionicons name="cloud-offline-outline" size={48} color={Colors.error} />
+                            <Text style={styles.errorTitle}>Failed to load</Text>
+                            <Text style={styles.errorDesc}>{errorDesc}</Text>
+                            <TouchableOpacity style={styles.retryButton} onPress={reload}>
+                                <Text style={styles.retryText}>Retry</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                    onMessage={(event) => {
+                        try {
+                            const data = JSON.parse(event.nativeEvent.data);
+                            console.log('[WebView Message]', data);
+                        } catch { }
+                    }}
+                />
+            )}
         </SafeAreaView>
     );
 }

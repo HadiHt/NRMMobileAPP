@@ -99,8 +99,14 @@ export async function getTaskDetails(id: number): Promise<any> {
  * Accept a task
  */
 export async function acceptTask(id: number): Promise<any> {
-    const response = await apiClient.post(`/api/tasks/${id}/accept`);
-    return response.data;
+    try {
+        console.log('=== ACCEPT TASK ===', id);
+        const response = await apiClient.post('/api/task/accept', null, { params: { taskid: id } });
+        return response.data;
+    } catch (err: any) {
+        console.log('=== ACCEPT TASK ERROR ===', err.response?.status, JSON.stringify(err.response?.data, null, 2));
+        throw err;
+    }
 }
 
 /**
@@ -113,8 +119,16 @@ export async function saveTask(model: any): Promise<any> {
 
 /**
  * Finalize a task
+ * POST /api/task/finalize-v2?id={taskId}
+ * Body: the full task data model (only populated fields)
  */
-export async function finalizeTask(id: number, model: any): Promise<any> {
-    const response = await apiClient.post(`/api/tasks/${id}/finalize`, model);
-    return response.data;
+export async function finalizeTask(id: number, taskData: any): Promise<any> {
+    try {
+        console.log('=== FINALIZE TASK ===', id);
+        const response = await apiClient.post('/api/task/finalize-v2', taskData, { params: { id } });
+        return response.data;
+    } catch (err: any) {
+        console.log('=== FINALIZE TASK ERROR ===', err.response?.status, JSON.stringify(err.response?.data, null, 2));
+        throw err;
+    }
 }

@@ -28,12 +28,12 @@ export async function getTaskComments(taskId: number): Promise<CommentModel[]> {
 
 /**
  * Add a comment to a task
- * POST /api/comment/task/add
+ * POST /api/comment
  */
 export async function addTaskComment(commentModel: Partial<CommentModel>): Promise<CommentModel> {
     try {
         console.log('=== ADD COMMENT PAYLOAD ===', JSON.stringify(commentModel, null, 2));
-        const response = await apiClient.post<CommentModel>('/api/comment/task/add', commentModel);
+        const response = await apiClient.post<CommentModel>('/api/comment', commentModel);
         return response.data;
     } catch (err: any) {
         console.log('=== ADD COMMENT ERROR ===', err.response?.status, JSON.stringify(err.response?.data, null, 2) || err.message);

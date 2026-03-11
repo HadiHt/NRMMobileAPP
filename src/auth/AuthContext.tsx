@@ -126,7 +126,7 @@ export function AuthProvider({ children }: Props) {
             }
 
             console.log('=== TOKEN RECEIVED ===');
-            console.log('Access Token (first 50 chars):', data.access_token?.substring(0, 50));
+            console.log('=== FULL ACCESS TOKEN ===', data.access_token);
             console.log('Refresh Token:', data.refresh_token ? 'YES' : 'NO');
             console.log('Expires in:', data.expires_in, 'seconds');
 
@@ -193,18 +193,18 @@ export function AuthProvider({ children }: Props) {
             // openAuthSessionAsync expects a url to open, and a redirectUrl to listen to.
             // On web, it opens a popup and resolves when maybeCompleteAuthSession is called in the popup.
             const result = await WebBrowser.openAuthSessionAsync(authUrl, REDIRECT_URI);
-            
+
             console.log('=== AUTH SESSION RESULT ===', result);
 
             if (result.type === 'success' && result.url) {
                 // Parse the URL to get the code
                 const urlObj = new URL(result.url);
                 const code = urlObj.searchParams.get('code');
-                
+
                 if (code) {
                     console.log('=== GOT CODE FROM AUTH SESSION ===');
                     await exchangeCode(code);
-                    
+
                     // Redirect the main window to the tasks tab
                     console.log('=== REDIRECTING FROM LOGIN ===');
                     setTimeout(() => router.replace('/(tabs)'), 500);

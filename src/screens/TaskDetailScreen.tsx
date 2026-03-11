@@ -7,12 +7,15 @@ import {
     SafeAreaView,
     TouchableOpacity,
     ActivityIndicator,
+    Alert,
+    Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../theme';
 import { getTaskDetails } from '../api/taskService';
 import FormioInlineWebView from '../components/FormioInlineWebView';
 import TaskComments from '../components/TaskComments';
+import { acceptTask, finalizeTask } from '../api/taskService';
 
 const extractFormioConfig = (webPart: any) => {
     if (!webPart) return null;
@@ -77,6 +80,20 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState(0);
+    const [actionLoading, setActionLoading] = useState(false);
+
+    // Extract task status name (handle both string and object formats)
+    const getStatusName = (): string => {
+        const status = taskData?.status;
+        if (!status) return '';
+        if (typeof status === 'string') return status;
+        return status.name || status.Name || status.description || '';
+    };
+
+    const statusName = taskData ? getStatusName() : '';
+    const isNew = statusName.toLowerCase() === 'new';
+    const isAccepted = statusName.toLowerCase() === 'accepted';
+    const isReadOnly = isNew; // "New" tasks are read-only
 
     useEffect(() => {
         fetchTask();
@@ -103,11 +120,60 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
             });
 
             setTaskData(data);
+            console.log('=== TASK STATUS ===', JSON.stringify(data?.status));
         } catch (err: any) {
             console.log('=== TASK DETAIL FAILED ===', err.response?.status, err.message);
             setError(`Failed to load task: ${err.response?.status || ''} ${err.message}`);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const showAlert = (title: string, message: string) => {
+        if (Platform.OS === 'web') {
+            window.alert(`${title}\n${message}`);
+        } else {
+            Alert.alert(title, message);
+        }
+    };
+
+    const handleAccept = async () => {
+        try {
+            setActionLoading(true);
+            await acceptTask(taskId);
+            showAlert('Success', 'Task has been accepted.');
+            await fetchTask(); // Refresh to get new status
+        } catch (err: any) {
+            console.error('Failed to accept task', err);
+            const msg = err.response?.data?.message || err.message || 'Unknown error';
+            showAlert('Error', `Failed to accept task: ${msg}`);
+        } finally {
+            setActionLoading(false);
+        }
+    };
+
+    const handleFinalize = async () => {
+        try {
+            setActionLoading(true);
+            // Send the full task data as the finalize body (it came from the API so it matches the expected model)
+            console.log('=== FINALIZE: taskData keys ===', Object.keys(taskData));
+            console.log('=== FINALIZE: status ===', JSON.stringify(taskData.status));
+            console.log('=== FINALIZE: transitions ===', JSON.stringify(taskData.transitions));
+            console.log('=== FINALIZE: nextTransition ===', JSON.stringify(taskData.nextTransition));
+            const result = await finalizeTask(taskId, taskData);
+            showAlert('Success', 'Task has been finalized.');
+            // If a new task was created (next in flow), navigate to it
+            if (result?.newTaskId || result?.nextTaskId) {
+                const nextId = result.newTaskId || result.nextTaskId;
+                showAlert('Next Task', `A new task #${nextId} has been created.`);
+            }
+            await fetchTask(); // Refresh to get new status
+        } catch (err: any) {
+            console.error('Failed to finalize task', err);
+            const msg = err.response?.data?.message || err.response?.data || err.message || 'Unknown error';
+            showAlert('Error', `Failed to finalize task: ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`);
+        } finally {
+            setActionLoading(false);
         }
     };
 
@@ -157,6 +223,16 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
                 <Text style={styles.headerTitle} numberOfLines={1}>
                     Task #{taskId}
                 </Text>
+                {statusName ? (
+                    <View style={[
+                        styles.statusBadge,
+                        isNew && styles.statusNew,
+                        isAccepted && styles.statusAccepted,
+                        !isNew && !isAccepted && styles.statusOther,
+                    ]}>
+                        <Text style={styles.statusBadgeText}>{statusName}</Text>
+                    </View>
+                ) : null}
                 <TouchableOpacity onPress={() => onOpenInWebView(taskId)} style={styles.webViewButton}>
                     <Ionicons name="open-outline" size={20} color="#fff" />
                 </TouchableOpacity>
@@ -215,7 +291,7 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
                             if (isCommentWebPart) {
                                 return (
                                     <View style={styles.formioSection}>
-                                        <TaskComments taskId={taskId} readOnly={activeWebPart.readOnly} />
+                                        <TaskComments taskId={taskId} jobId={taskData?.job?.id} readOnly={isReadOnly || activeWebPart.readOnly} />
                                     </View>
                                 );
                             }
@@ -263,7 +339,7 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
 
                                 return (
                                     <View style={styles.formioSection}>
-                                        <FormioInlineWebView formioConfig={config} formData={formData} />
+                                        <FormioInlineWebView formioConfig={config} formData={formData} readOnly={isReadOnly} />
                                     </View>
                                 );
                             }
@@ -281,6 +357,39 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
                     </View>
                 )}
             </View>
+
+            {/* Action buttons at bottom */}
+            {isNew && (
+                <View style={styles.actionBar}>
+                    <TouchableOpacity
+                        style={[styles.actionButton, styles.acceptButton]}
+                        onPress={handleAccept}
+                        disabled={actionLoading}
+                    >
+                        {actionLoading ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                            <Text style={styles.actionButtonText}>Accept Task</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {isAccepted && (
+                <View style={styles.actionBar}>
+                    <TouchableOpacity
+                        style={[styles.actionButton, styles.finalizeButton]}
+                        onPress={handleFinalize}
+                        disabled={actionLoading}
+                    >
+                        {actionLoading ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                            <Text style={styles.actionButtonText}>Finalize Task</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            )}
         </SafeAreaView>
     );
 }
@@ -404,5 +513,52 @@ const styles = StyleSheet.create({
     emptyText: {
         fontSize: 14,
         color: '#888',
+    },
+
+    /* Status badge */
+    statusBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 12,
+        marginRight: 8,
+    },
+    statusNew: {
+        backgroundColor: 'rgba(255, 193, 7, 0.25)',
+    },
+    statusAccepted: {
+        backgroundColor: 'rgba(76, 175, 80, 0.25)',
+    },
+    statusOther: {
+        backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    },
+    statusBadgeText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#fff',
+    },
+
+    /* Action bar */
+    actionBar: {
+        padding: 16,
+        backgroundColor: '#fff',
+        borderTopWidth: 1,
+        borderTopColor: '#e0e0e0',
+    },
+    actionButton: {
+        paddingVertical: 14,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    acceptButton: {
+        backgroundColor: '#4CAF50',
+    },
+    finalizeButton: {
+        backgroundColor: '#FF9800',
+    },
+    actionButtonText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '700',
     },
 });

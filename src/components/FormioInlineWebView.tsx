@@ -8,9 +8,10 @@ const TOKEN_KEY = 'auth_access_token';
 interface Props {
     formioConfig: string | object;
     formData?: any;
+    readOnly?: boolean;
 }
 
-export default function FormioInlineWebView({ formioConfig, formData }: Props) {
+export default function FormioInlineWebView({ formioConfig, formData, readOnly = false }: Props) {
     const webViewRef = useRef<WebView>(null);
     const [html, setHtml] = useState('');
 
@@ -48,7 +49,7 @@ export default function FormioInlineWebView({ formioConfig, formData }: Props) {
                             var config = ${configJson};
                             var initialData = ${formData ? JSON.stringify(formData) : 'null'};
                             
-                            Formio.createForm(document.getElementById('formio'), config).then(function(form) {
+                            Formio.createForm(document.getElementById('formio'), config, { readOnly: ${readOnly} }).then(function(form) {
                                 if (initialData) {
                                     form.submission = {
                                         data: initialData
@@ -99,11 +100,12 @@ export default function FormioInlineWebView({ formioConfig, formData }: Props) {
     return (
         <View style={styles.container}>
             {Platform.OS === 'web' ? (
-                <iframe
-                    srcDoc={html}
-                    style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
-                    sandbox="allow-scripts allow-same-origin allow-forms"
-                />
+                <View style={{ flex: 1 }}>
+                    <iframe
+                        srcDoc={html}
+                        style={{ width: '100%', height: '100%', border: 'none' }}
+                    />
+                </View>
             ) : (
                 <WebView
                     ref={webViewRef}

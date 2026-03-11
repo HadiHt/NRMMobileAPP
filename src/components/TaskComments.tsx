@@ -22,10 +22,11 @@ import {
 
 interface Props {
     taskId: number;
+    jobId?: number;
     readOnly?: boolean;
 }
 
-export default function TaskComments({ taskId, readOnly = false }: Props) {
+export default function TaskComments({ taskId, jobId, readOnly = false }: Props) {
     const [comments, setComments] = useState<CommentModel[]>([]);
     const [loading, setLoading] = useState(true);
     const [newComment, setNewComment] = useState('');
@@ -39,16 +40,18 @@ export default function TaskComments({ taskId, readOnly = false }: Props) {
         try {
             setLoading(true);
             const data = await getTaskComments(taskId);
-            // Sort by date Entered descending
+            // Sort by id ascending (lowest to highest)
             const sorted = data.sort((a, b) => {
-                const dateA = a.dateEntered ? new Date(a.dateEntered).getTime() : 0;
-                const dateB = b.dateEntered ? new Date(b.dateEntered).getTime() : 0;
-                return dateB - dateA;
+                return (a.id || 0) - (b.id || 0);
             });
             setComments(sorted);
         } catch (err: any) {
             console.error('Failed to fetch comments', err);
-            Alert.alert('Error', 'Failed to load comments');
+            if (Platform.OS === 'web') {
+                window.alert('Failed to load comments');
+            } else {
+                Alert.alert('Error', 'Failed to load comments');
+            }
         } finally {
             setLoading(false);
         }
@@ -60,39 +63,60 @@ export default function TaskComments({ taskId, readOnly = false }: Props) {
         try {
             setSubmitting(true);
             const commentObj = {
+                id: 0,
                 comment: newComment.trim(),
                 commentType: 'Type',
-                contextId: taskId.toString(),
-                contextTable: 'JobTask'
+                contextId: (jobId || taskId).toString(),
+                contextTable: 'JobTask',
+                dateEntered: new Date().toISOString(),
+                order: 0,
+                displayMode: 0,
             };
             await addTaskComment(commentObj);
             setNewComment('');
             fetchComments();
         } catch (err: any) {
-            console.error('Failed to add comment', err);
-            Alert.alert('Error', 'Failed to add comment');
+            console.error('Failed to add comment', err.response?.data || err.message);
+            const errorMsg = err.response?.data?.message || err.response?.data?.title || JSON.stringify(err.response?.data) || err.message || 'Unknown error';
+            if (Platform.OS === 'web') {
+                window.alert(`Error Adding Comment\nStatus: ${err.response?.status}\nDetails: ${errorMsg}`);
+            } else {
+                Alert.alert('Error Adding Comment', `Details: ${errorMsg}`);
+            }
         } finally {
             setSubmitting(false);
         }
     };
 
     const handleDelete = (commentId: number) => {
-        Alert.alert('Delete Comment', 'Are you sure you want to delete this comment?', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-                text: 'Delete',
-                style: 'destructive',
-                onPress: async () => {
-                    try {
-                        await deleteTaskComment(commentId);
-                        fetchComments();
-                    } catch (err: any) {
+        if (Platform.OS === 'web') {
+            const confirmed = window.confirm('Are you sure you want to delete this comment?');
+            if (confirmed) {
+                deleteTaskComment(commentId)
+                    .then(() => fetchComments())
+                    .catch((err: any) => {
                         console.error('Failed to delete comment', err);
-                        Alert.alert('Error', 'Failed to delete comment');
+                        window.alert('Failed to delete comment');
+                    });
+            }
+        } else {
+            Alert.alert('Delete Comment', 'Are you sure you want to delete this comment?', [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await deleteTaskComment(commentId);
+                            fetchComments();
+                        } catch (err: any) {
+                            console.error('Failed to delete comment', err);
+                            Alert.alert('Error', 'Failed to delete comment');
+                        }
                     }
                 }
-            }
-        ]);
+            ]);
+        }
     };
 
     const renderComment = ({ item }: { item: CommentModel }) => {

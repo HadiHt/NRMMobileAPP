@@ -167,7 +167,8 @@ export default function TaskListScreen({ onTaskPress }: Props) {
         if (!state) return Colors.textMuted;
         const s = state.toLowerCase();
         if (s.includes('new') || s.includes('open')) return '#4CAF50';
-        if (s.includes('progress') || s.includes('active')) return '#2196F3';
+        if (s.includes('accepted')) return '#2196F3';
+        if (s.includes('progress') || s.includes('active')) return '#FF9800';
         if (s.includes('finali') || s.includes('complet') || s.includes('done')) return '#9E9E9E';
         if (s.includes('cancel')) return '#F44336';
         return Colors.textPrimary;
@@ -245,7 +246,7 @@ export default function TaskListScreen({ onTaskPress }: Props) {
                                     return (
                                         <View key={col.key} style={[s.cell, { width: col.width }]}>
                                             {isState ? (
-                                                <View style={[s.stateBadge, { backgroundColor: getStateColor(val) + '25' }]}>
+                                                <View style={[s.stateBadge, { backgroundColor: getStateColor(val) + '40' }]}>
                                                     <Text
                                                         style={[s.cellText, { color: getStateColor(val), fontWeight: '600' }]}
                                                         numberOfLines={1}
