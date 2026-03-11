@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
-import * as SecureStore from 'expo-secure-store';
+import { TokenStorage } from '../auth/TokenStorage';
 
 const TOKEN_KEY = 'auth_access_token';
 
@@ -17,7 +17,7 @@ export default function FormioInlineWebView({ formioConfig, formData }: Props) {
     useEffect(() => {
         const loadHtml = async () => {
             const configJson = typeof formioConfig === 'string' ? formioConfig : JSON.stringify(formioConfig);
-            const token = await SecureStore.getItemAsync(TOKEN_KEY) || '';
+            const token = await TokenStorage.getItemAsync(TOKEN_KEY) || '';
 
             const formioHtml = `
                 <!DOCTYPE html>
@@ -55,7 +55,12 @@ export default function FormioInlineWebView({ formioConfig, formData }: Props) {
                                     };
                                 }
                                 form.on('submit', function(submission) {
-                                    window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'submit', data: submission }));
+                                    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+                                        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'submit', data: submission }));
+                                    } else {
+                                        // For standard web iframe communication
+                                        window.parent.postMessage(JSON.stringify({ type: 'submit', data: submission }), '*');
+                                    }
                                 });
                             });
                         } catch(e) {
@@ -71,23 +76,49 @@ export default function FormioInlineWebView({ formioConfig, formData }: Props) {
         loadHtml();
     }, [formioConfig, formData]);
 
+    useEffect(() => {
+        if (Platform.OS === 'web') {
+            const handleMessage = (event: MessageEvent) => {
+                try {
+                    // Check if it's the expected JSON structure
+                    const data = JSON.parse(event.data);
+                    if (data && data.type === 'submit') {
+                        console.log('Formio Inline Msg (Web):', event.data);
+                    }
+                } catch (e) {
+                    // Ignore parsing errors for other unrelated postMessages
+                }
+            };
+            window.addEventListener('message', handleMessage);
+            return () => window.removeEventListener('message', handleMessage);
+        }
+    }, []);
+
     if (!html) return <ActivityIndicator />;
 
     return (
         <View style={styles.container}>
-            <WebView
-                ref={webViewRef}
-                source={{ html, baseUrl: 'https://app.form.io/' }}
-                style={styles.webview}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                originWhitelist={['*']}
-                scalesPageToFit={false}
-                scrollEnabled={true}
-                onMessage={(event) => {
-                    console.log('Formio Inline Msg:', event.nativeEvent.data);
-                }}
-            />
+            {Platform.OS === 'web' ? (
+                <iframe
+                    srcDoc={html}
+                    style={{ flex: 1, border: 'none', width: '100%', height: '100%' }}
+                    sandbox="allow-scripts allow-same-origin allow-forms"
+                />
+            ) : (
+                <WebView
+                    ref={webViewRef}
+                    source={{ html, baseUrl: 'https://app.form.io/' }}
+                    style={styles.webview}
+                    javaScriptEnabled={true}
+                    domStorageEnabled={true}
+                    originWhitelist={['*']}
+                    scalesPageToFit={false}
+                    scrollEnabled={true}
+                    onMessage={(event) => {
+                        console.log('Formio Inline Msg:', event.nativeEvent.data);
+                    }}
+                />
+            )}
         </View>
     );
 }

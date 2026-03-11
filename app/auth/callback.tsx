@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../src/auth/AuthContext';
+import * as WebBrowser from 'expo-web-browser';
+
+WebBrowser.maybeCompleteAuthSession();
 
 export default function AuthCallback() {
     const params = useLocalSearchParams();
@@ -28,7 +31,11 @@ export default function AuthCallback() {
         }
 
         if (code) {
-            setStatus('Exchanging code for token...');
+            setStatus('Completing authentication...');
+            
+            // On native or if the window wasn't a popup, we might still reach here and need to handle it manually.
+            // On web as a popup, maybeCompleteAuthSession will usually redirect/close before reaching this 
+            // point, but it's safe to have this as a fallback.
             handleAuthCallback(code)
                 .then(() => {
                     console.log('========================================');

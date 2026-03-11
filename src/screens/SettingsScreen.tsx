@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Switch, Alert } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Switch, Alert, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../theme';
 import { useAuth } from '../auth/AuthContext';
@@ -15,10 +15,17 @@ export default function SettingsScreen() {
     }, []);
 
     const handleLogout = () => {
-        Alert.alert('Sign Out', 'Are you sure?', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Sign Out', style: 'destructive', onPress: logout },
-        ]);
+        if (Platform.OS === 'web') {
+            const confirmed = window.confirm('Are you sure you want to sign out?');
+            if (confirmed) {
+                logout();
+            }
+        } else {
+            Alert.alert('Sign Out', 'Are you sure?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Sign Out', style: 'destructive', onPress: logout },
+            ]);
+        }
     };
 
     const items = [

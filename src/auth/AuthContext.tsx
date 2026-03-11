@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, Rea
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
+import { useRouter } from 'expo-router';
 import { TokenStorage } from './TokenStorage';
 
 // IdentityServer configuration
@@ -61,6 +62,7 @@ function generateState(): string {
 }
 
 export function AuthProvider({ children }: Props) {
+    const router = useRouter();
     const [state, setState] = useState<AuthState>({
         accessToken: null,
         refreshToken: null,
@@ -170,6 +172,7 @@ export function AuthProvider({ children }: Props) {
 
     const login = useCallback(async () => {
         console.log('=== LOGIN STARTED ===');
+        setState((s) => ({ ...s, isLoading: true }));
 
         const stateParam = generateState();
         const scopeString = SCOPES.join(' ');
@@ -187,12 +190,35 @@ export function AuthProvider({ children }: Props) {
         console.log('=== AUTH URL ===', authUrl);
 
         try {
-            // Just open the browser — expo-router will handle the redirect
-            // via the /auth/callback route
-            await WebBrowser.openBrowserAsync(authUrl);
-            console.log('=== BROWSER CLOSED ===');
+            // openAuthSessionAsync expects a url to open, and a redirectUrl to listen to.
+            // On web, it opens a popup and resolves when maybeCompleteAuthSession is called in the popup.
+            const result = await WebBrowser.openAuthSessionAsync(authUrl, REDIRECT_URI);
+            
+            console.log('=== AUTH SESSION RESULT ===', result);
+
+            if (result.type === 'success' && result.url) {
+                // Parse the URL to get the code
+                const urlObj = new URL(result.url);
+                const code = urlObj.searchParams.get('code');
+                
+                if (code) {
+                    console.log('=== GOT CODE FROM AUTH SESSION ===');
+                    await exchangeCode(code);
+                    
+                    // Redirect the main window to the tasks tab
+                    console.log('=== REDIRECTING FROM LOGIN ===');
+                    setTimeout(() => router.replace('/(tabs)'), 500);
+                } else {
+                    console.error('=== NO CODE FOUND IN RETURN URL ===');
+                    setState((s) => ({ ...s, isLoading: false }));
+                }
+            } else {
+                console.log('=== AUTH SESSION CANCELLED OR FAILED ===');
+                setState((s) => ({ ...s, isLoading: false }));
+            }
         } catch (e) {
             console.error('=== LOGIN ERROR ===', e);
+            setState((s) => ({ ...s, isLoading: false }));
         }
     }, []);
 
