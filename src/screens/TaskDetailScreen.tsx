@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../theme';
 import { getTaskDetails } from '../api/taskService';
 import FormioInlineWebView from '../components/FormioInlineWebView';
+import TaskComments from '../components/TaskComments';
 
 const extractFormioConfig = (webPart: any) => {
     if (!webPart) return null;
@@ -206,6 +207,19 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
                         </Text>
 
                         {(() => {
+                            const isCommentWebPart =
+                                activeWebPart.name?.toLowerCase().includes('comment') ||
+                                activeWebPart.tabName?.toLowerCase().includes('comment') ||
+                                activeWebPart.type === 'comments';
+
+                            if (isCommentWebPart) {
+                                return (
+                                    <View style={styles.formioSection}>
+                                        <TaskComments taskId={taskId} readOnly={activeWebPart.readOnly} />
+                                    </View>
+                                );
+                            }
+
                             const config = extractFormioConfig(activeWebPart);
                             if (config) {
                                 // The API response nests the target webpart ID under taskType -> webParts -> entry -> webPart -> id
