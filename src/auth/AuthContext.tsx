@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import * as SecureStore from 'expo-secure-store';
 import * as Linking from 'expo-linking';
+import { TokenStorage } from './TokenStorage';
 
 // IdentityServer configuration
 const IDP_AUTHORITY = 'https://gdi-demo2.identityserver.gdi.net';
@@ -68,12 +68,12 @@ export function AuthProvider({ children }: Props) {
         isAuthenticated: false,
     });
 
-    // Restore tokens from SecureStore on mount
+    // Restore tokens from TokenStorage on mount
     useEffect(() => {
         (async () => {
             try {
-                const token = await SecureStore.getItemAsync(TOKEN_KEY);
-                const refresh = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+                const token = await TokenStorage.getItemAsync(TOKEN_KEY);
+                const refresh = await TokenStorage.getItemAsync(REFRESH_TOKEN_KEY);
                 console.log('=== AUTH INIT: token found?', token ? 'YES' : 'NO', '===');
                 if (token) {
                     setState({
@@ -140,12 +140,12 @@ export function AuthProvider({ children }: Props) {
         console.log('=== SAVING TOKENS ===');
 
         if (accessToken) {
-            await SecureStore.setItemAsync(TOKEN_KEY, String(accessToken));
+            await TokenStorage.setItemAsync(TOKEN_KEY, String(accessToken));
         }
         if (refreshToken) {
-            await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, String(refreshToken));
+            await TokenStorage.setItemAsync(REFRESH_TOKEN_KEY, String(refreshToken));
         }
-        await SecureStore.setItemAsync(TOKEN_EXPIRY_KEY, String(expiry));
+        await TokenStorage.setItemAsync(TOKEN_EXPIRY_KEY, String(expiry));
 
         setState({
             accessToken: accessToken || null,
@@ -157,9 +157,9 @@ export function AuthProvider({ children }: Props) {
     };
 
     const clearTokens = async () => {
-        await SecureStore.deleteItemAsync(TOKEN_KEY);
-        await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
-        await SecureStore.deleteItemAsync(TOKEN_EXPIRY_KEY);
+        await TokenStorage.deleteItemAsync(TOKEN_KEY);
+        await TokenStorage.deleteItemAsync(REFRESH_TOKEN_KEY);
+        await TokenStorage.deleteItemAsync(TOKEN_EXPIRY_KEY);
         setState({
             accessToken: null,
             refreshToken: null,

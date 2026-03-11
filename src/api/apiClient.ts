@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosError } from 'axios';
-import * as SecureStore from 'expo-secure-store';
+import { TokenStorage } from '../auth/TokenStorage';
 
 // Base URL for the W4 API
 // Update this to your production/staging URL
@@ -25,7 +25,7 @@ const apiClient: AxiosInstance = axios.create({
 // Request interceptor — attach Bearer token
 apiClient.interceptors.request.use(
     async (config: InternalAxiosRequestConfig) => {
-        const token = await SecureStore.getItemAsync(TOKEN_KEY);
+        const token = await TokenStorage.getItemAsync(TOKEN_KEY);
         console.log('=== API REQUEST ===', config.method?.toUpperCase(), (config.baseURL || '') + (config.url || ''));
         if (token) {
             console.log('=== FULL BEARER TOKEN ===', `Bearer ${token}`);

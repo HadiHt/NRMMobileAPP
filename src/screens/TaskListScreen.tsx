@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Colors, Typography, Spacing, BorderRadius } from '../theme';
 import { getTaskList, TaskListItem } from '../api/taskService';
+import { TokenStorage } from '../auth/TokenStorage';
 
 interface Props {
     onTaskPress: (taskId: number) => void;
@@ -106,8 +107,7 @@ export default function TaskListScreen({ onTaskPress }: Props) {
             if (showLoading) setLoading(true);
             setError(null);
 
-            const SecureStore = require('expo-secure-store');
-            const token = await SecureStore.getItemAsync('auth_access_token');
+            const token = await TokenStorage.getItemAsync('auth_access_token');
 
             if (!token) {
                 setError('NO TOKEN FOUND');
