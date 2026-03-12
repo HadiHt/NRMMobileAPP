@@ -125,6 +125,7 @@ export async function saveTask(model: any): Promise<any> {
 export async function finalizeTask(id: number, taskData: any): Promise<any> {
     try {
         console.log('=== FINALIZE TASK ===', id);
+        console.log('=== FINALIZE PAYLOAD ===', JSON.stringify(taskData, null, 2));
         const response = await apiClient.post('/api/task/finalize-v2', taskData, { params: { id } });
         return response.data;
     } catch (err: any) {
