@@ -17,6 +17,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Colors, Typography, Spacing } from '../theme';
 import { getFinalizedTaskList, getTaskList, TaskListItem } from '../api/taskService';
 import { getJobDetails } from '../api/jobService';
+import { getUserSettings, GRID_SETTINGS_TYPE, saveUserSettings, UserGridSettings } from '../api/userSettingsService';
 import { TokenStorage } from '../auth/TokenStorage';
 
 interface Props {
@@ -40,7 +41,9 @@ const DASHBOARD_MENU_OPTIONS: { key: string; label: string; icon: keyof typeof I
 ];
 
 // Table column definitions matching the web UI
-const BASE_COLUMNS = [
+type TableColumn = { key: string; label: string; width: number };
+
+const BASE_COLUMNS: TableColumn[] = [
     { key: 'taskId', label: 'ID', width: 60 },
     { key: 'jobId', label: 'Job', width: 70 },
     { key: 'taskName', label: 'Task Name', width: 200 },
@@ -419,6 +422,126 @@ function createFormColumnKey(rawKey: string): string {
     return `cfv_${normalizeKeyName(rawKey)}`;
 }
 
+function getColumnSettingKey(column: any): string | null {
+    const key = column?.key ?? column?.Key ?? column?.field ?? column?.Field ?? column?.name ?? column?.Name ?? column?.columnKey ?? column?.ColumnKey ?? null;
+    return typeof key === 'string' && key.trim() ? key.trim() : null;
+}
+
+function getColumnSettingOrder(column: any): number {
+    const raw = column?.order ?? column?.Order ?? column?.index ?? column?.Index ?? column?.position ?? column?.Position;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function getColumnSettingVisible(column: any): boolean | null {
+    if (typeof column?.visible === 'boolean') return column.visible;
+    if (typeof column?.Visible === 'boolean') return column.Visible;
+    if (typeof column?.hidden === 'boolean') return !column.hidden;
+    if (typeof column?.Hidden === 'boolean') return !column.Hidden;
+    return null;
+}
+
+function getColumnSettingWidth(column: any): number | null {
+    const parsed = Number(column?.width ?? column?.Width);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(60, parsed);
+}
+
+function parseSortFromSettings(rawSort: any): { key: string; direction: SortDirection } | null {
+    if (!rawSort) return null;
+
+    const sortObj = Array.isArray(rawSort) ? rawSort[0] : rawSort;
+    if (!sortObj || typeof sortObj !== 'object') return null;
+
+    const key = sortObj.key ?? sortObj.Key ?? sortObj.field ?? sortObj.Field ?? sortObj.columnKey ?? sortObj.ColumnKey ?? sortObj.name ?? sortObj.Name ?? null;
+    const dir = sortObj.direction ?? sortObj.Direction ?? sortObj.dir ?? sortObj.Dir ?? sortObj.order ?? sortObj.Order ?? null;
+    if (typeof key !== 'string' || !key) return null;
+    const normalizedDir = String(dir || '').toLowerCase();
+    if (normalizedDir.startsWith('asc')) return { key, direction: 'asc' };
+    if (normalizedDir.startsWith('desc')) return { key, direction: 'desc' };
+    return null;
+}
+
+const SETTINGS_NAME_TO_COLUMN_KEY: Record<string, string> = {
+    id: 'taskId',
+    taskid: 'taskId',
+    jobid: 'jobId',
+    taskname: 'taskName',
+    typename: 'jobTypeName',
+    jobtypename: 'jobTypeName',
+    assignees: 'assignees',
+    currentstate: 'currentState',
+    dataareaname: 'areaName',
+    areaname: 'areaName',
+    dataplannedprojectstartdate: 'plannedStartDate',
+    plannedprojectstartdate: 'plannedStartDate',
+    dataplannedprojectenddate: 'plannedEndDate',
+    plannedprojectenddate: 'plannedEndDate',
+    dataprojectid: 'projectId',
+    projectid: 'projectId',
+    dataaddresswp: 'address',
+    addresswp: 'address',
+    dataprojectprogress: 'projectProgress',
+    projectprogress: 'projectProgress',
+};
+
+function resolveSettingsColumnKeyToLocalKey(
+    rawSettingsKey: string,
+    availableColumns: TableColumn[]
+): string | null {
+    const normalizedRaw = normalizeKeyName(rawSettingsKey);
+
+    const byAlias = SETTINGS_NAME_TO_COLUMN_KEY[normalizedRaw];
+    if (byAlias) {
+        const foundAlias = availableColumns.find((c) => c.key === byAlias);
+        if (foundAlias) return foundAlias.key;
+    }
+
+    const direct = availableColumns.find((c) => normalizeKeyName(c.key) === normalizedRaw);
+    if (direct) return direct.key;
+
+    if (rawSettingsKey.toLowerCase().startsWith('data.')) {
+        const tail = rawSettingsKey.slice(5);
+        const cfvKey = createFormColumnKey(tail);
+        const foundCfv = availableColumns.find((c) => normalizeKeyName(c.key) === normalizeKeyName(cfvKey));
+        if (foundCfv) return foundCfv.key;
+    }
+
+    const cfvFallback = createFormColumnKey(rawSettingsKey);
+    const foundCfvFallback = availableColumns.find((c) => normalizeKeyName(c.key) === normalizeKeyName(cfvFallback));
+    if (foundCfvFallback) return foundCfvFallback.key;
+
+    return null;
+}
+
+function parseSortFromSettingsColumns(
+    settingsColumns: any[],
+    availableColumns: TableColumn[]
+): { key: string; direction: SortDirection } | null {
+    const sortable = settingsColumns
+        .map((col) => {
+            const sort = col?.sort ?? col?.Sort;
+            const direction = sort?.direction ?? sort?.Direction;
+            const priority = Number(sort?.priority ?? sort?.Priority ?? Number.MAX_SAFE_INTEGER);
+            const rawName = getColumnSettingKey(col);
+            if (!rawName || !direction || !Number.isFinite(priority)) return null;
+            const key = resolveSettingsColumnKeyToLocalKey(rawName, availableColumns);
+            if (!key) return null;
+            const d = String(direction).toLowerCase();
+            if (!d.startsWith('asc') && !d.startsWith('desc')) return null;
+            return {
+                key,
+                direction: d.startsWith('asc') ? 'asc' as SortDirection : 'desc' as SortDirection,
+                priority,
+            };
+        })
+        .filter((x): x is { key: string; direction: SortDirection; priority: number } => x !== null)
+        .sort((a, b) => a.priority - b.priority);
+
+    if (sortable.length === 0) return null;
+    return { key: sortable[0].key, direction: sortable[0].direction };
+}
+
 function resolveFieldValue(task: TaskListItem, key: string): { value: any; matchedKey: string } | null {
     const keysToTry = FIELD_MAPPING[key] || [
         key,
@@ -538,14 +661,21 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
     });
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isColumnMenuOpen, setIsColumnMenuOpen] = useState(false);
+    const [isSavingGrid, setIsSavingGrid] = useState(false);
     const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(
         () => Object.fromEntries(BASE_COLUMNS.map((col) => [col.key, true]))
     );
     const jobCreateFormCacheRef = useRef<Map<number, Record<string, any>>>(new Map());
+    const loadedSettingsRef = useRef<UserGridSettings | null>(null);
+    const hasAttemptedSettingsLoadRef = useRef(false);
+    const isApplyingSettingsRef = useRef(false);
     const lockedColumnSet = useMemo(() => new Set(LOCKED_COLUMN_KEYS), []);
+    const gridSettingsType = mode === 'completed'
+        ? GRID_SETTINGS_TYPE.JOB_TASK_COMPLETED_GRID
+        : GRID_SETTINGS_TYPE.JOB_TASK_GRID;
     const visibleColumns = useMemo(
-        () => actualColumns.filter((col) => lockedColumnSet.has(col.key) || columnVisibility[col.key] !== false),
-        [actualColumns, columnVisibility, lockedColumnSet]
+        () => actualColumns.filter((col) => columnVisibility[col.key] !== false),
+        [actualColumns, columnVisibility]
     );
     const togglableColumns = useMemo(
         () => actualColumns.filter((col) => !lockedColumnSet.has(col.key)),
@@ -844,6 +974,23 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                 : await getTaskList();
 
             const { enrichedTasks, dynamicColumns } = await enrichTasksWithJobData(data);
+            let settings: UserGridSettings | null = null;
+            try {
+                const response = await getUserSettings(gridSettingsType);
+                settings = response?.settings || null;
+                loadedSettingsRef.current = settings;
+                console.log(`[TaskList] Active grid settings type=${gridSettingsType} parsed settings:`, settings);
+            } catch {
+                settings = null;
+                console.log(`[TaskList] Active grid settings type=${gridSettingsType} could not be loaded.`);
+            }
+            hasAttemptedSettingsLoadRef.current = true;
+
+            const settingsColumnsRaw = (settings as any)?.columns ?? (settings as any)?.Columns;
+            const settingsColumns = Array.isArray(settingsColumnsRaw) ? settingsColumnsRaw : [];
+            const sortFromSettingsGlobal = parseSortFromSettings((settings as any)?.sort ?? (settings as any)?.Sort);
+
+            isApplyingSettingsRef.current = true;
             setTasks(enrichedTasks);
             setActualColumns((prev) => {
                 const widthByKey = new Map(prev.map((col) => [col.key, col.width]));
@@ -856,15 +1003,61 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                     width: widthByKey.get(col.key) ?? col.width,
                 }));
                 const merged = [...base, ...dynamic];
+                const settingsByLocalKey = new Map<string, any>();
+                settingsColumns.forEach((colSetting) => {
+                    const rawName = getColumnSettingKey(colSetting);
+                    if (!rawName) return;
+                    const localKey = resolveSettingsColumnKeyToLocalKey(rawName, merged);
+                    if (!localKey) return;
+                    settingsByLocalKey.set(localKey, colSetting);
+                });
+
+                const withSettings = merged.map((col, idx) => {
+                    const colSetting = settingsByLocalKey.get(col.key);
+                    return {
+                        column: {
+                            ...col,
+                            width: getColumnSettingWidth(colSetting) ?? col.width,
+                        },
+                        visible: getColumnSettingVisible(colSetting),
+                        order: getColumnSettingOrder(colSetting),
+                        fallbackOrder: idx,
+                    };
+                });
+
+                withSettings.sort((a, b) => {
+                    if (a.order === b.order) return a.fallbackOrder - b.fallbackOrder;
+                    return a.order - b.order;
+                });
+
+                const finalColumns = withSettings.map((x) => x.column);
                 setColumnVisibility((prevVisibility) => {
                     const next = { ...prevVisibility };
-                    merged.forEach((col) => {
-                        if (next[col.key] === undefined) next[col.key] = true;
+                    withSettings.forEach((entry) => {
+                        const key = entry.column.key;
+                        if (entry.visible !== null) {
+                            next[key] = entry.visible;
+                            return;
+                        }
+                        if (next[key] === undefined) next[key] = true;
                     });
                     return next;
                 });
-                return merged;
+                return finalColumns;
             });
+
+            const sortFromSettingsColumns = parseSortFromSettingsColumns(settingsColumns, [
+                ...BASE_COLUMNS,
+                ...dynamicColumns,
+            ]);
+            const sortFromSettings = sortFromSettingsGlobal || sortFromSettingsColumns;
+            if (sortFromSettings) {
+                setSortState(sortFromSettings);
+            }
+
+            setTimeout(() => {
+                isApplyingSettingsRef.current = false;
+            }, 0);
         } catch (err: any) {
             const status = err.response?.status || 'unknown';
             const serverMsg = err.response?.data
@@ -876,13 +1069,53 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
             setLoading(false);
             setRefreshing(false);
         }
-    }, [enrichTasksWithJobData, mode]);
+    }, [enrichTasksWithJobData, gridSettingsType, mode]);
 
     useFocusEffect(
         useCallback(() => {
             fetchTasks();
         }, [fetchTasks])
     );
+
+    useEffect(() => {
+        loadedSettingsRef.current = null;
+        hasAttemptedSettingsLoadRef.current = false;
+    }, [gridSettingsType]);
+
+    const saveGridSettingsNow = useCallback(async () => {
+        if (isSavingGrid) return;
+        try {
+            setIsSavingGrid(true);
+            const previous = loadedSettingsRef.current || {};
+            const columns = actualColumns.map((col, index) => ({
+                key: col.key,
+                width: col.width,
+                visible: columnVisibility[col.key] !== false,
+                order: index,
+            }));
+            const sort = sortState.key && sortState.direction
+                ? { key: sortState.key, direction: sortState.direction }
+                : null;
+
+            const nextSettings: UserGridSettings = {
+                ...previous,
+                columns,
+                sort,
+            };
+
+            await saveUserSettings({
+                settingsType: gridSettingsType,
+                settings: nextSettings,
+                customWidgetId: null,
+            });
+            loadedSettingsRef.current = nextSettings;
+            console.log(`[TaskList] Grid settings saved for settingsType=${gridSettingsType}`);
+        } catch (err: any) {
+            console.log('[TaskList] Grid settings save failed:', err?.response?.status, err?.response?.data || err?.message);
+        } finally {
+            setIsSavingGrid(false);
+        }
+    }, [actualColumns, columnVisibility, gridSettingsType, isSavingGrid, sortState]);
 
     const getStateColor = (state: string | undefined) => {
         if (!state) return Colors.textMuted;
@@ -995,6 +1228,13 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                     <Text style={s.breadcrumb}>{mode === 'completed' ? '/ Completed Tasks' : '/ Tasks'}</Text>
                 </View>
                 <View style={s.headerRight}>
+                    <TouchableOpacity
+                        style={[s.saveGridBtn, isSavingGrid ? s.saveGridBtnDisabled : null]}
+                        onPress={saveGridSettingsNow}
+                        disabled={isSavingGrid}
+                    >
+                        <Text style={s.saveGridBtnText}>{isSavingGrid ? 'Saving...' : 'Save Grid'}</Text>
+                    </TouchableOpacity>
                     <Text style={s.headerCount}>{tasks.length} tasks</Text>
                     <TouchableOpacity
                         style={s.columnsToggleBtn}
@@ -1255,6 +1495,20 @@ const s = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+    },
+    saveGridBtn: {
+        backgroundColor: '#0b3a66',
+        borderRadius: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+    },
+    saveGridBtnDisabled: {
+        opacity: 0.65,
+    },
+    saveGridBtnText: {
+        color: '#ffffff',
+        fontSize: 11,
+        fontWeight: '700',
     },
     menuToggleBtn: {
         paddingVertical: 2,
