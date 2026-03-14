@@ -3,26 +3,35 @@ import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity } from 'rea
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../src/auth/AuthContext';
 import * as WebBrowser from 'expo-web-browser';
+import { TokenStorage } from '../../src/auth/TokenStorage';
 
 WebBrowser.maybeCompleteAuthSession();
+const debugLog = (...args: any[]) => {
+    if (__DEV__) {
+        console.log(...args);
+    }
+};
 
 export default function AuthCallback() {
     const params = useLocalSearchParams();
     const router = useRouter();
-    const { handleAuthCallback } = useAuth();
+    const { handleAuthCallback, isAuthenticated } = useAuth();
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const [status, setStatus] = useState('Initializing...');
 
     useEffect(() => {
+        if (isAuthenticated) {
+            router.replace('/(tabs)');
+            return;
+        }
+
         const code = params.code as string;
         const error = params.error as string;
 
-        console.log('========================================');
-        console.log('=== AUTH CALLBACK ROUTE HIT ===');
-        console.log('=== code:', code ? code.substring(0, 30) + '...' : 'NONE');
-        console.log('=== error:', error || 'NONE');
-        console.log('=== all params:', JSON.stringify(params));
-        console.log('========================================');
+        debugLog('=== AUTH CALLBACK ROUTE HIT ===', {
+            hasCode: !!code,
+            error: error || null,
+        });
 
         if (error) {
             const desc = params.error_description as string;
@@ -38,20 +47,36 @@ export default function AuthCallback() {
             // point, but it's safe to have this as a fallback.
             handleAuthCallback(code)
                 .then(() => {
-                    console.log('========================================');
-                    console.log('=== TOKEN EXCHANGE COMPLETE ===');
-                    console.log('========================================');
+                    debugLog('=== TOKEN EXCHANGE COMPLETE ===');
                     setStatus('Authenticated! Redirecting...');
                     setTimeout(() => router.replace('/(tabs)'), 500);
                 })
                 .catch((e: any) => {
-                    console.error('=== CALLBACK EXCHANGE ERROR ===', e);
-                    setErrorMsg(e?.message || 'Token exchange failed');
+                    debugLog('=== CALLBACK EXCHANGE ERROR ===', e);
+                    // Avoid transient error flash if token was already saved by another auth path.
+                    setStatus('Finalizing sign in...');
+                    setTimeout(async () => {
+                        const token = await TokenStorage.getItemAsync('auth_access_token');
+                        if (token) {
+                            router.replace('/(tabs)');
+                            return;
+                        }
+                        setErrorMsg(e?.message || 'Token exchange failed');
+                    }, 700);
                 });
         } else {
-            setErrorMsg('No authorization code received');
+            // Params can be briefly unavailable while auth session resolves.
+            setStatus('Completing authentication...');
+            setTimeout(async () => {
+                const token = await TokenStorage.getItemAsync('auth_access_token');
+                if (token) {
+                    router.replace('/(tabs)');
+                    return;
+                }
+                router.replace('/login');
+            }, 500);
         }
-    }, []);
+    }, [params, router, handleAuthCallback, isAuthenticated]);
 
     if (errorMsg) {
         return (

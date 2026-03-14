@@ -20,7 +20,7 @@ export interface JobDetail {
  * Get job details by ID (used by mobile)
  */
 export async function getJobDetails(id: number): Promise<JobDetail> {
-    const response = await apiClient.get(`/api/jobs/${id}`);
+    const response = await apiClient.get(`/api/job/${id}`);
     return response.data;
 }
 
@@ -28,7 +28,7 @@ export async function getJobDetails(id: number): Promise<JobDetail> {
  * Create a new job (used by mobile)
  */
 export async function createJob(model: any): Promise<any> {
-    const response = await apiClient.post('/api/jobs', model);
+    const response = await apiClient.post('/api/job', model);
     return response.data;
 }
 
@@ -36,6 +36,6 @@ export async function createJob(model: any): Promise<any> {
  * Delete jobs (soft delete)
  */
 export async function deleteJobs(model: any): Promise<any> {
-    const response = await apiClient.post('/api/jobs/delete', model);
+    const response = await apiClient.post('/api/job/delete', model);
     return response.data;
 }

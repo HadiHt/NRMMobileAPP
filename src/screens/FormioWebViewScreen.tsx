@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
     View,
     Text,
@@ -23,7 +23,6 @@ interface Props {
 
 export default function FormioWebViewScreen({ initialUrl, taskId }: Props) {
     const webViewRef = useRef<WebView>(null);
-    const [currentUrl, setCurrentUrl] = useState(initialUrl || WFM_BASE_URL);
     const [canGoBack, setCanGoBack] = useState(false);
     const [canGoForward, setCanGoForward] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -65,7 +64,6 @@ export default function FormioWebViewScreen({ initialUrl, taskId }: Props) {
     const handleNavigationStateChange = (navState: WebViewNavigation) => {
         setCanGoBack(navState.canGoBack);
         setCanGoForward(navState.canGoForward);
-        setCurrentUrl(navState.url);
         if (navState.title) setPageTitle(navState.title);
     };
 
@@ -76,6 +74,25 @@ export default function FormioWebViewScreen({ initialUrl, taskId }: Props) {
     const targetUrl = taskId
         ? `${WFM_BASE_URL}/#/task/${taskId}`
         : (initialUrl || WFM_BASE_URL);
+
+    useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        if (typeof window !== 'undefined') {
+            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+        }
+    }, [targetUrl]);
+
+    const openFormsInNewTab = () => {
+        if (typeof window !== 'undefined') {
+            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+        }
+    };
+
+    const openFormsHere = () => {
+        if (typeof window !== 'undefined') {
+            window.location.assign(targetUrl);
+        }
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -113,12 +130,20 @@ export default function FormioWebViewScreen({ initialUrl, taskId }: Props) {
 
             {/* WebView / iframe */}
             {Platform.OS === 'web' ? (
-                <View style={{ flex: 1 }}>
-                    <iframe
-                        src={targetUrl}
-                        style={{ width: '100%', height: '100%', border: 'none' }}
-                        allow="clipboard-read; clipboard-write"
-                    />
+                <View style={styles.webFallbackContainer}>
+                    <Ionicons name="open-outline" size={36} color={Colors.accent} />
+                    <Text style={styles.webFallbackTitle}>Open Forms in Browser</Text>
+                    <Text style={styles.webFallbackText}>
+                        Forms opened in a new tab. If it did not open, use one of the buttons below.
+                    </Text>
+                    <View style={styles.webFallbackActions}>
+                        <TouchableOpacity style={styles.primaryButton} onPress={openFormsInNewTab}>
+                            <Text style={styles.primaryButtonText}>Open in New Tab</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.secondaryButton} onPress={openFormsHere}>
+                            <Text style={styles.secondaryButtonText}>Open in This Tab</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             ) : (
                 <WebView
@@ -246,5 +271,50 @@ const styles = StyleSheet.create({
     retryText: {
         ...Typography.button,
         color: '#fff',
+    },
+    webFallbackContainer: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: Spacing.xl,
+        gap: Spacing.md,
+    },
+    webFallbackTitle: {
+        ...Typography.h3,
+        color: Colors.textPrimary,
+        textAlign: 'center',
+    },
+    webFallbackText: {
+        ...Typography.body,
+        color: Colors.textSecondary,
+        textAlign: 'center',
+    },
+    webFallbackActions: {
+        width: '100%',
+        maxWidth: 320,
+        gap: Spacing.sm,
+        marginTop: Spacing.sm,
+    },
+    primaryButton: {
+        backgroundColor: Colors.accent,
+        paddingVertical: Spacing.sm,
+        borderRadius: BorderRadius.md,
+        alignItems: 'center',
+    },
+    primaryButtonText: {
+        ...Typography.button,
+        color: '#fff',
+    },
+    secondaryButton: {
+        borderWidth: 1,
+        borderColor: Colors.border,
+        paddingVertical: Spacing.sm,
+        borderRadius: BorderRadius.md,
+        alignItems: 'center',
+        backgroundColor: Colors.surface,
+    },
+    secondaryButtonText: {
+        ...Typography.button,
+        color: Colors.textPrimary,
     },
 });

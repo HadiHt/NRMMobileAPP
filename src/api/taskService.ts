@@ -48,6 +48,8 @@ export interface TaskListItem {
     plannedEndDate?: string;
     currentState?: string;
     projectId?: string;
+    projectProgress?: string;
+    createdBy?: string;
     address?: string;
 }
 
@@ -56,24 +58,30 @@ export interface TaskListItem {
  * GET /api/tasklist
  */
 export async function getTaskList(): Promise<TaskListItem[]> {
-    console.log('=== FETCHING TASK LIST ===');
     try {
         const response = await apiClient.get<any>('/api/tasklist');
-        console.log('=== API RESPONSE KEYS ===', Object.keys(response.data || {}));
 
         // Handle different possible response formats
         const tasks = response.data?.Tasks || response.data?.tasks || (Array.isArray(response.data) ? response.data : []);
-        console.log('=== GOT TASK LIST ===', tasks.length, 'tasks');
-
-        if (tasks.length > 0) {
-            console.log('=== FIRST TASK PREVIEW ===', JSON.stringify(tasks[0]).substring(0, 500));
-        }
-
         return tasks;
     } catch (err: any) {
-        console.log('=== TASK LIST FAILED ===', err.response?.status, JSON.stringify(err.response?.data || {}).substring(0, 500) || err.message);
         throw err;
     }
+}
+
+/**
+ * Get finalized/completed task list for current user
+ * POST /api/tasklist/finalized
+ */
+export async function getFinalizedTaskList(
+    filters: any = { condition: 'and', rules: [] },
+    page = 1,
+    size = 50
+): Promise<TaskListItem[]> {
+    const response = await apiClient.post<any>('/api/tasklist/finalized', filters, {
+        params: { page, size },
+    });
+    return response.data?.Tasks || response.data?.tasks || (Array.isArray(response.data) ? response.data : []);
 }
 
 /**
@@ -129,7 +137,17 @@ export async function finalizeTask(id: number, taskData: any): Promise<any> {
         const response = await apiClient.post('/api/task/finalize-v2', taskData, { params: { id } });
         return response.data;
     } catch (err: any) {
-        console.log('=== FINALIZE TASK ERROR ===', err.response?.status, JSON.stringify(err.response?.data, null, 2));
+        const status = err.response?.status;
+        console.log('=== FINALIZE TASK ERROR ===', status, JSON.stringify(err.response?.data, null, 2));
+
+        // Some environments still rely on the legacy finalize route.
+        // If v2 fails server-side, try the legacy endpoint once.
+        if (status >= 500) {
+            console.log('=== FINALIZE FALLBACK: /api/task/finalize?id={id} ===', id);
+            const fallback = await apiClient.post('/api/task/finalize', taskData, { params: { id } });
+            return fallback.data;
+        }
+
         throw err;
     }
 }

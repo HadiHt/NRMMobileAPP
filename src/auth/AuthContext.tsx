@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import { TokenStorage } from './TokenStorage';
 
@@ -12,8 +11,11 @@ const SCOPES = ['openid', 'profile', 'email', 'roles', 'tenant', 'w4api'];
 const CLIENT_SECRET = 'secret';
 const REDIRECT_URI = AuthSession.makeRedirectUri({ scheme: 'nrm-mobile', path: 'auth/callback' });
 
-// Log the exact redirect URI
-console.log('=== REDIRECT URI ===', REDIRECT_URI);
+const debugLog = (...args: any[]) => {
+    if (__DEV__) {
+        console.log(...args);
+    }
+};
 
 // Token storage keys
 const TOKEN_KEY = 'auth_access_token';
@@ -76,7 +78,7 @@ export function AuthProvider({ children }: Props) {
             try {
                 const token = await TokenStorage.getItemAsync(TOKEN_KEY);
                 const refresh = await TokenStorage.getItemAsync(REFRESH_TOKEN_KEY);
-                console.log('=== AUTH INIT: token found?', token ? 'YES' : 'NO', '===');
+                debugLog('=== AUTH INIT: token found?', token ? 'YES' : 'NO', '===');
                 if (token) {
                     setState({
                         accessToken: token,
@@ -87,7 +89,7 @@ export function AuthProvider({ children }: Props) {
                     return;
                 }
             } catch (e) {
-                console.log('=== AUTH INIT: error restoring tokens ===', e);
+                debugLog('=== AUTH INIT: error restoring tokens ===', e);
             }
             setState((s) => ({ ...s, isLoading: false }));
         })();
@@ -97,7 +99,7 @@ export function AuthProvider({ children }: Props) {
      * Exchange authorization code for tokens using fetch directly
      */
     const exchangeCode = async (code: string): Promise<void> => {
-        console.log('=== EXCHANGING CODE... ===');
+        debugLog('=== EXCHANGING CODE... ===');
         try {
             const body = new URLSearchParams({
                 grant_type: 'authorization_code',
@@ -107,7 +109,7 @@ export function AuthProvider({ children }: Props) {
                 redirect_uri: REDIRECT_URI,
             }).toString();
 
-            console.log('=== TOKEN REQUEST ===', TOKEN_ENDPOINT);
+            debugLog('=== TOKEN REQUEST ===', TOKEN_ENDPOINT);
 
             const response = await fetch(TOKEN_ENDPOINT, {
                 method: 'POST',
@@ -118,28 +120,27 @@ export function AuthProvider({ children }: Props) {
             });
 
             const data = await response.json();
-            console.log('=== TOKEN RESPONSE STATUS ===', response.status);
+            debugLog('=== TOKEN RESPONSE STATUS ===', response.status);
 
             if (!response.ok) {
-                console.error('=== TOKEN ERROR ===', JSON.stringify(data));
-                return;
+                debugLog('=== TOKEN ERROR ===', JSON.stringify(data));
+                throw new Error(data?.error_description || data?.error || `Token exchange failed (${response.status})`);
             }
 
-            console.log('=== TOKEN RECEIVED ===');
-            console.log('=== FULL ACCESS TOKEN ===', data.access_token);
-            console.log('Refresh Token:', data.refresh_token ? 'YES' : 'NO');
-            console.log('Expires in:', data.expires_in, 'seconds');
+            debugLog('=== TOKEN RECEIVED ===');
 
             await saveTokens(data.access_token, data.refresh_token, data.expires_in);
         } catch (e) {
-            console.error('=== CODE EXCHANGE FAILED ===', e);
+            debugLog('=== CODE EXCHANGE FAILED ===', e);
+            throw e;
         }
     };
 
     const saveTokens = async (accessToken: string, refreshToken?: string, expiresIn?: number) => {
         const expiry = Date.now() + (expiresIn ?? 3600) * 1000;
 
-        console.log('=== SAVING TOKENS ===');
+        debugLog('=== SAVING TOKENS ===');
+        debugLog('=== ACCESS TOKEN ===', accessToken);
 
         if (accessToken) {
             await TokenStorage.setItemAsync(TOKEN_KEY, String(accessToken));
@@ -155,7 +156,7 @@ export function AuthProvider({ children }: Props) {
             isLoading: false,
             isAuthenticated: !!accessToken,
         });
-        console.log('=== AUTH STATE: AUTHENTICATED ===');
+        debugLog('=== AUTH STATE: AUTHENTICATED ===');
     };
 
     const clearTokens = async () => {
@@ -171,7 +172,7 @@ export function AuthProvider({ children }: Props) {
     };
 
     const login = useCallback(async () => {
-        console.log('=== LOGIN STARTED ===');
+        debugLog('=== LOGIN STARTED ===');
         setState((s) => ({ ...s, isLoading: true }));
 
         const stateParam = generateState();
@@ -187,14 +188,14 @@ export function AuthProvider({ children }: Props) {
             `&state=${stateParam}` +
             `&prompt=login`;
 
-        console.log('=== AUTH URL ===', authUrl);
+        debugLog('=== AUTH URL ===', authUrl);
 
         try {
             // openAuthSessionAsync expects a url to open, and a redirectUrl to listen to.
             // On web, it opens a popup and resolves when maybeCompleteAuthSession is called in the popup.
             const result = await WebBrowser.openAuthSessionAsync(authUrl, REDIRECT_URI);
 
-            console.log('=== AUTH SESSION RESULT ===', result);
+            debugLog('=== AUTH SESSION RESULT ===', result);
 
             if (result.type === 'success' && result.url) {
                 // Parse the URL to get the code
@@ -202,25 +203,25 @@ export function AuthProvider({ children }: Props) {
                 const code = urlObj.searchParams.get('code');
 
                 if (code) {
-                    console.log('=== GOT CODE FROM AUTH SESSION ===');
+                    debugLog('=== GOT CODE FROM AUTH SESSION ===');
                     await exchangeCode(code);
 
                     // Redirect the main window to the tasks tab
-                    console.log('=== REDIRECTING FROM LOGIN ===');
+                    debugLog('=== REDIRECTING FROM LOGIN ===');
                     setTimeout(() => router.replace('/(tabs)'), 500);
                 } else {
-                    console.error('=== NO CODE FOUND IN RETURN URL ===');
+                    debugLog('=== NO CODE FOUND IN RETURN URL ===');
                     setState((s) => ({ ...s, isLoading: false }));
                 }
             } else {
-                console.log('=== AUTH SESSION CANCELLED OR FAILED ===');
+                debugLog('=== AUTH SESSION CANCELLED OR FAILED ===');
                 setState((s) => ({ ...s, isLoading: false }));
             }
         } catch (e) {
-            console.error('=== LOGIN ERROR ===', e);
+            debugLog('=== LOGIN ERROR ===', e);
             setState((s) => ({ ...s, isLoading: false }));
         }
-    }, []);
+    }, [router]);
 
     const logout = useCallback(async () => {
         await clearTokens();

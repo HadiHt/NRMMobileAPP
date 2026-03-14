@@ -155,19 +155,65 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
     const handleFinalize = async () => {
         try {
             setActionLoading(true);
+            const transitions = Array.isArray(taskData?.transitions)
+                ? taskData.transitions
+                : Array.isArray(taskData?.Transitions)
+                    ? taskData.Transitions
+                    : [];
+
+            const existingNextTransition = taskData?.nextTransition || taskData?.NextTransition || null;
+            const explicitNextAction = taskData?.nextAction || taskData?.NextAction || null;
+
+            const finalizeTransition = existingNextTransition || transitions.find((t: any) => {
+                const devName = String(t?.devName ?? t?.DevName ?? '').toLowerCase();
+                const name = String(t?.name ?? t?.Name ?? '').toLowerCase();
+                const finalizationAction = t?.finalizationAction ?? t?.FinalizationAction;
+                return devName === 'finalize' || name === 'finalize' || !!(finalizationAction?.name ?? finalizationAction?.Name);
+            });
+
+            const transitionDevName = finalizeTransition?.devName ?? finalizeTransition?.DevName ?? 'Finalize';
+            const transitionName = finalizeTransition?.name ?? finalizeTransition?.Name ?? transitionDevName;
+            const rawFinalizationAction = finalizeTransition?.finalizationAction ?? finalizeTransition?.FinalizationAction;
+            const finalizationActionName =
+                rawFinalizationAction?.name ??
+                rawFinalizationAction?.Name ??
+                explicitNextAction ??
+                transitionName ??
+                'Finalize';
+
+            const normalizedTransition = {
+                ...(finalizeTransition || {}),
+                devName: transitionDevName,
+                name: transitionName,
+                finalizationAction: {
+                    ...(rawFinalizationAction || {}),
+                    id: rawFinalizationAction?.id ?? rawFinalizationAction?.Id ?? transitionDevName,
+                    name: finalizationActionName,
+                },
+            };
+
+            const finalizePayload = {
+                ...taskData,
+                nextAction: finalizationActionName,
+                nextTransition: normalizedTransition,
+            };
+
             // Send the full task data as the finalize body (it came from the API so it matches the expected model)
             console.log('=== FINALIZE: taskData keys ===', Object.keys(taskData));
             console.log('=== FINALIZE: status ===', JSON.stringify(taskData.status));
             console.log('=== FINALIZE: transitions ===', JSON.stringify(taskData.transitions));
             console.log('=== FINALIZE: nextTransition ===', JSON.stringify(taskData.nextTransition));
-            const result = await finalizeTask(taskId, taskData);
+            console.log('=== FINALIZE: nextAction ===', finalizationActionName);
+            console.log('=== FINALIZE: normalized nextTransition ===', JSON.stringify(normalizedTransition));
+            const result = await finalizeTask(taskId, finalizePayload);
             showAlert('Success', 'Task has been finalized.');
             // If a new task was created (next in flow), navigate to it
             if (result?.newTaskId || result?.nextTaskId) {
                 const nextId = result.newTaskId || result.nextTaskId;
                 showAlert('Next Task', `A new task #${nextId} has been created.`);
             }
-            await fetchTask(); // Refresh to get new status
+            onBack();
+            return;
         } catch (err: any) {
             console.error('Failed to finalize task', err);
             const msg = err.response?.data?.message || err.response?.data || err.message || 'Unknown error';

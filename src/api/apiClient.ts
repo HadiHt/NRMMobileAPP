@@ -26,12 +26,6 @@ const apiClient: AxiosInstance = axios.create({
 apiClient.interceptors.request.use(
     async (config: InternalAxiosRequestConfig) => {
         const token = await TokenStorage.getItemAsync(TOKEN_KEY);
-        console.log('=== API REQUEST ===', config.method?.toUpperCase(), (config.baseURL || '') + (config.url || ''));
-        if (token) {
-            console.log('=== FULL BEARER TOKEN ===', `Bearer ${token}`);
-        } else {
-            console.log('=== TOKEN PRESENT === NO');
-        }
         if (token && config.headers) {
             config.headers.Authorization = `Bearer ${token}`;
         }
