@@ -133,6 +133,16 @@ const DASHBOARD_SECTIONS: DashboardSection[] = [
         textColor: '#ffffff',
         iconColor: '#ffffff',
       },
+      {
+        key: 'application-settings',
+        title: 'Application Settings',
+        subtitle: 'Configure application settings',
+        icon: 'settings-outline',
+        topBackground: '#115ea8',
+        bottomBackground: '#0f569b',
+        textColor: '#ffffff',
+        iconColor: '#ffffff',
+      },
     ],
   },
   {
@@ -198,7 +208,7 @@ export default function TasksTab() {
 
   const sectionWidth = `${100 / sectionColumns}%` as `${number}%`;
   const allMenuCards = useMemo(() => DASHBOARD_SECTIONS.flatMap((section) => section.cards), []);
-  const navigableCardKeys = useMemo(() => new Set(['tasks', 'completed-tasks']), []);
+  const navigableCardKeys = useMemo(() => new Set(['tasks', 'completed-tasks', 'application-settings']), []);
 
   const openCard = (cardKey: string) => {
     if (cardKey === 'tasks') {
@@ -209,6 +219,10 @@ export default function TasksTab() {
     if (cardKey === 'completed-tasks') {
       setTaskListMode('completed');
       setShowTaskList(true);
+      return;
+    }
+    if (cardKey === 'application-settings') {
+      router.push('/application-settings');
     }
   };
 

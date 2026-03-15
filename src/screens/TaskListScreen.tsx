@@ -25,6 +25,8 @@ interface Props {
     mode?: 'active' | 'completed';
 }
 
+const IS_WEB = Platform.OS === 'web';
+
 const DASHBOARD_MENU_OPTIONS: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: 'workers', label: 'Workers', icon: 'person-outline' },
     { key: 'field-work', label: 'Field Work', icon: 'bicycle-outline' },
@@ -35,6 +37,7 @@ const DASHBOARD_MENU_OPTIONS: { key: string; label: string; icon: keyof typeof I
     { key: 'skills', label: 'Skills', icon: 'ribbon-outline' },
     { key: 'web-parts', label: 'Web Parts', icon: 'apps-outline' },
     { key: 'web-hook-request-logs', label: 'Web Hook Request Logs', icon: 'swap-horizontal-outline' },
+    { key: 'application-settings', label: 'Application Settings', icon: 'settings-outline' },
     { key: 'job-types', label: 'Job Types', icon: 'briefcase-outline' },
     { key: 'tasks', label: 'Tasks', icon: 'list-outline' },
     { key: 'completed-tasks', label: 'Completed Tasks', icon: 'checkmark-outline' },
@@ -44,19 +47,19 @@ const DASHBOARD_MENU_OPTIONS: { key: string; label: string; icon: keyof typeof I
 type TableColumn = { key: string; label: string; width: number };
 
 const BASE_COLUMNS: TableColumn[] = [
-    { key: 'taskId', label: 'ID', width: 60 },
-    { key: 'jobId', label: 'Job', width: 70 },
-    { key: 'taskName', label: 'Task Name', width: 200 },
-    { key: 'jobTypeName', label: 'Job Type', width: 100 },
-    { key: 'assignees', label: 'Assignees', width: 200 },
-    { key: 'areaName', label: 'Area Name', width: 120 },
-    { key: 'plannedStartDate', label: 'Planned Start', width: 150 },
-    { key: 'plannedEndDate', label: 'Planned End', width: 150 },
-    { key: 'currentState', label: 'Current State', width: 120 },
-    { key: 'projectId', label: 'Project ID', width: 100 },
-    { key: 'projectProgress', label: 'Project Progress', width: 130 },
-    { key: 'createdBy', label: 'Created By', width: 150 },
-    { key: 'address', label: 'Address', width: 150 },
+    { key: 'taskId', label: 'ID', width: IS_WEB ? 44 : 60 },
+    { key: 'jobId', label: 'Job', width: IS_WEB ? 48 : 70 },
+    { key: 'taskName', label: 'Task Name', width: IS_WEB ? 96 : 200 },
+    { key: 'jobTypeName', label: 'Job Type', width: IS_WEB ? 76 : 100 },
+    { key: 'assignees', label: 'Assignees', width: IS_WEB ? 96 : 200 },
+    { key: 'areaName', label: 'Area Name', width: IS_WEB ? 82 : 120 },
+    { key: 'plannedStartDate', label: 'Planned Start', width: IS_WEB ? 92 : 150 },
+    { key: 'plannedEndDate', label: 'Planned End', width: IS_WEB ? 92 : 150 },
+    { key: 'currentState', label: 'Current State', width: IS_WEB ? 86 : 120 },
+    { key: 'projectId', label: 'Project ID', width: IS_WEB ? 72 : 100 },
+    { key: 'projectProgress', label: 'Project Progress', width: IS_WEB ? 88 : 130 },
+    { key: 'createdBy', label: 'Created By', width: IS_WEB ? 92 : 150 },
+    { key: 'address', label: 'Address', width: IS_WEB ? 92 : 150 },
 ];
 const LOCKED_COLUMN_KEYS = ['taskId', 'jobId', 'taskName', 'jobTypeName'];
 
@@ -444,7 +447,9 @@ function getColumnSettingVisible(column: any): boolean | null {
 function getColumnSettingWidth(column: any): number | null {
     const parsed = Number(column?.width ?? column?.Width);
     if (!Number.isFinite(parsed)) return null;
-    return Math.max(60, parsed);
+    const minWidth = IS_WEB ? 44 : 60;
+    const maxWidth = IS_WEB ? 110 : 240;
+    return Math.max(minWidth, Math.min(maxWidth, parsed));
 }
 
 function parseSortFromSettings(rawSort: any): { key: string; direction: SortDirection } | null {
@@ -739,7 +744,7 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                     formColumns.set(colKey, {
                         key: colKey,
                         label: toSpacedLabel(rawKey),
-                        width: 170,
+                        width: IS_WEB ? 92 : 170,
                     });
                 }
             }
@@ -868,7 +873,8 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                 setIsHorizontalScrollEnabled(false);
             },
             onPanResponderMove: (_, gestureState) => {
-                const nextWidth = Math.max(60, startWidth + gestureState.dx);
+                const minWidth = IS_WEB ? 44 : 60;
+                const nextWidth = Math.max(minWidth, startWidth + gestureState.dx);
                 commitWidth(nextWidth);
             },
             onPanResponderRelease: () => {
@@ -916,7 +922,7 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
             const current = resizeStateRef.current;
             if (!current.columnKey) return;
 
-            const nextWidth = Math.max(60, current.startWidth + (event.clientX - current.startX));
+            const nextWidth = Math.max(44, current.startWidth + (event.clientX - current.startX));
             current.pendingWidth = nextWidth;
 
             if (current.rafId !== null || typeof requestAnimationFrame !== 'function') return;
@@ -1552,15 +1558,15 @@ const s = StyleSheet.create({
         backgroundColor: '#F5C518', // GDI yellow header
         borderBottomWidth: 1,
         borderBottomColor: '#e0b000',
-        height: 44,
+        height: IS_WEB ? 32 : 44,
     },
     headerCell: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingLeft: 8,
+        paddingLeft: IS_WEB ? 4 : 8,
         borderRightWidth: 1,
         borderRightColor: '#e0b000',
-        height: 44,
+        height: IS_WEB ? 32 : 44,
     },
     headerPressArea: {
         flex: 1,
@@ -1569,10 +1575,10 @@ const s = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingVertical: 0,
-        paddingRight: 6,
+        paddingRight: IS_WEB ? 3 : 6,
     },
     headerCellText: {
-        fontSize: 12,
+        fontSize: IS_WEB ? 10 : 12,
         fontWeight: '700',
         color: '#333',
         flex: 1,
@@ -1581,7 +1587,7 @@ const s = StyleSheet.create({
         color: '#111',
     },
     resizeHandle: {
-        width: 14,
+        width: IS_WEB ? 10 : 14,
         height: '100%',
         alignItems: 'center',
         justifyContent: 'center',
@@ -1603,14 +1609,14 @@ const s = StyleSheet.create({
         backgroundColor: '#f7f9fc',
     },
     cell: {
-        paddingHorizontal: 8,
-        paddingVertical: 10,
+        paddingHorizontal: IS_WEB ? 4 : 8,
+        paddingVertical: IS_WEB ? 7 : 10,
         justifyContent: 'center',
         borderRightWidth: 1,
         borderRightColor: '#eee',
     },
     cellText: {
-        fontSize: 12,
+        fontSize: IS_WEB ? 11 : 12,
         color: '#333',
     },
     stateBadge: {
