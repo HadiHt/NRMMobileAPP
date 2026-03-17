@@ -64,7 +64,7 @@ export default function JobCard({
         </TouchableOpacity>
     );
 }
-
+//test
 const styles = StyleSheet.create({
     card: {
         flexDirection: 'row',
