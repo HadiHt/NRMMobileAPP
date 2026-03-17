@@ -10,25 +10,26 @@ import {
     TextInput,
     useWindowDimensions,
     ActivityIndicator,
+    Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
+    CreateFormField,
     getAllJobTypesForConfiguration,
+    getCreateFormFields,
+    getResponsiveTaskListConfig,
+    getResponsiveTaskListMetadata,
     getTaskListInfo,
     JobTypeSummary,
+    ResponsiveTaskListConfig,
+    ResponsiveTaskListField,
     TaskListInfoField,
     TaskListInfoResponse,
+    saveCreateFormFields,
+    saveResponsiveTaskListConfig,
 } from '../src/api/settingsService';
-import { getTaskList } from '../src/api/taskService';
-import { getJobDetails } from '../src/api/jobService';
-import {
-    getUserSettings,
-    GRID_SETTINGS_TYPE,
-    saveUserSettings,
-    UserGridColumnSetting,
-    UserSettingsModel,
-} from '../src/api/userSettingsService';
+import { getUserSettings, GRID_SETTINGS_TYPE, UserGridColumnSetting } from '../src/api/userSettingsService';
 
 type TabKey =
     | 'general'
@@ -62,71 +63,28 @@ type ColorRuleRow = {
     color: string;
 };
 
-type AttributeItem = {
+type JobTypeComponent = {
     key: string;
     label: string;
-    displayKey?: string;
-    source: 'tasklist-info' | 'task-data' | 'create-form' | 'web-parts' | 'grid-settings';
+    raw: any;
 };
 
-const FALLBACK_WORKORDER_ROWS = [
-    { left: 'ID', right: 'standard.id' },
-    { left: 'Job', right: 'standard.jobId' },
-    { left: 'Task name', right: 'standard.taskName' },
-    { left: 'Scheduled start', right: 'standard.scheduledStart' },
-    { left: 'Scheduled to', right: 'standard.scheduledTo' },
-    { left: 'Duration', right: 'standard.duration' },
-    { left: 'Accept date', right: 'standard.acceptDate' },
-    { left: 'Custom Workorder Status', right: 'standard.customWorkorderStatus' },
-    { left: 'Assignees', right: 'standard.assignees' },
-    { left: 'Accepted by', right: 'standard.acceptedBy.fullName' },
-    { left: 'Job Type', right: 'standard.typeName' },
-    { left: 'Priority', right: 'standard.priority' },
-];
+type JobTypeWithComponents = JobTypeSummary & {
+    creationForm?: { components?: any[] };
+    flattenedComponents: JobTypeComponent[];
+};
 
-const GRID_DEFAULT_COLUMN_WIDTH = 190;
-const LOCKED_TASKLIST_KEYS = new Set(['taskId', 'jobId', 'taskName', 'jobTypeName'].map(normalizeKey));
-const ENABLEABLE_BASE_COLUMNS: { key: string; label: string }[] = [
-    { key: 'assignees', label: 'Assignees' },
-    { key: 'areaName', label: 'Area Name' },
-    { key: 'plannedStartDate', label: 'Planned Start' },
-    { key: 'plannedEndDate', label: 'Planned End' },
-    { key: 'currentState', label: 'Current State' },
-    { key: 'projectId', label: 'Project ID' },
-    { key: 'projectProgress', label: 'Project Progress' },
-    { key: 'createdBy', label: 'Created By' },
-    { key: 'address', label: 'Address' },
-];
-const ENABLEABLE_BASE_KEY_SET = new Set(ENABLEABLE_BASE_COLUMNS.map((c) => normalizeKey(c.key)));
-const SETTINGS_KEY_TO_TASKLIST_KEY: Record<string, string> = {
-    id: 'taskId',
-    taskid: 'taskId',
-    jobid: 'jobId',
-    taskname: 'taskName',
-    typename: 'jobTypeName',
-    jobtypename: 'jobTypeName',
-    assignees: 'assignees',
-    currentstate: 'currentState',
-    dataareaname: 'areaName',
-    areaname: 'areaName',
-    dataplannedprojectstartdate: 'plannedStartDate',
-    plannedprojectstartdate: 'plannedStartDate',
-    dataplannedprojectenddate: 'plannedEndDate',
-    plannedprojectenddate: 'plannedEndDate',
-    dataprojectid: 'projectId',
-    projectid: 'projectId',
-    dataaddresswp: 'address',
-    addresswp: 'address',
-    dataprojectprogress: 'projectProgress',
-    projectprogress: 'projectProgress',
+type MetadataField = {
+    key: string;
+    name: string;
+};
+
+type UserSettingColumnRow = UserGridColumnSetting & {
+    __sourceIndex: number;
 };
 
 function normalizeKey(key: string): string {
     return key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-}
-
-function createFormColumnKey(rawKey: string): string {
-    return `cfv_${normalizeKey(rawKey)}`;
 }
 
 function humanize(raw: string): string {
@@ -139,168 +97,47 @@ function humanize(raw: string): string {
         .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-function shortAttributeKey(raw: string): string {
-    if (/^cfv_/i.test(raw)) return humanize(raw.replace(/^cfv_/i, ''));
-    return raw
-        .replace(/^data\./i, '')
-        .replace(/^createFormValues\./i, '')
-        .replace(/^creationForm\./i, '')
-        .replace(/^webParts\./i, '');
-}
-
-function resolveToTaskListColumnKey(rawSettingsKey: string): string {
-    const raw = String(rawSettingsKey || '').trim();
-    if (!raw) return '';
-    const normalized = normalizeKey(raw);
-
-    if (SETTINGS_KEY_TO_TASKLIST_KEY[normalized]) {
-        return SETTINGS_KEY_TO_TASKLIST_KEY[normalized];
-    }
-
-    if (/^data\./i.test(raw)) {
-        return createFormColumnKey(raw.slice(5));
-    }
-
-    if (raw.toLowerCase().startsWith('cfv_')) return raw;
-    return raw;
-}
-
-function readSettingsColumnKey(col: UserGridColumnSetting): string {
-    const raw = col?.name ?? col?.key ?? col?.field ?? col?.columnKey ?? '';
-    return String(raw || '').trim();
-}
-
-function readSettingsColumnOrder(col: UserGridColumnSetting): number {
-    const value = Number(col?.order ?? col?.index ?? col?.position ?? Number.MAX_SAFE_INTEGER);
-    return Number.isFinite(value) ? value : Number.MAX_SAFE_INTEGER;
-}
-
-function isSettingsColumnVisible(col: UserGridColumnSetting): boolean {
-    if (typeof col?.visible === 'boolean') return col.visible;
-    if (typeof col?.hidden === 'boolean') return !col.hidden;
-    return true;
-}
-
-function addAttribute(
-    map: Map<string, AttributeItem>,
-    key: string,
-    label: string,
-    source: AttributeItem['source'],
-    displayKey?: string
-) {
-    const safeKey = String(key || '').trim();
-    if (!safeKey) return;
-    const n = normalizeKey(safeKey);
-    if (map.has(n)) return;
-    map.set(n, {
-        key: safeKey,
-        label: label.trim() || humanize(shortAttributeKey(safeKey)),
-        displayKey,
-        source,
-    });
-}
-
-function flattenCreateFormValueKeys(
-    value: any,
-    collector: Set<string>,
-    path = '',
-    depth = 0
-) {
-    if (depth > 4 || value === null || value === undefined) return;
-
-    if (typeof value === 'string') {
-        const text = value.trim();
-        if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
-            try {
-                flattenCreateFormValueKeys(JSON.parse(text), collector, path, depth + 1);
-                return;
-            } catch {
-                // ignore malformed json-like strings
-            }
-        }
-        if (path) collector.add(path);
-        return;
-    }
-
-    if (typeof value !== 'object') {
-        if (path) collector.add(path);
-        return;
-    }
-
-    if (Array.isArray(value)) {
-        if (value.length === 0) return;
-        const isKvArray = value.every((item) => {
-            if (!item || typeof item !== 'object') return false;
-            const key = item.key ?? item.Key ?? item.name ?? item.Name ?? item.field ?? item.Field;
-            return typeof key === 'string';
-        });
-        if (isKvArray) {
-            value.forEach((item) => {
-                const key = item.key ?? item.Key ?? item.name ?? item.Name ?? item.field ?? item.Field;
-                const next = path ? `${path}.${key}` : String(key);
-                const val = item.value ?? item.Value ?? item.val ?? item.Val;
-                flattenCreateFormValueKeys(val, collector, next, depth + 1);
-            });
-            return;
-        }
-        value.slice(0, 6).forEach((item, idx) => {
-            const next = path ? `${path}.${idx + 1}` : String(idx + 1);
-            flattenCreateFormValueKeys(item, collector, next, depth + 1);
-        });
-        return;
-    }
-
-    Object.entries(value).forEach(([k, v]) => {
-        const next = path ? `${path}.${k}` : k;
-        flattenCreateFormValueKeys(v, collector, next, depth + 1);
-    });
-}
-
-function tryGetCreateFormValues(job: any): any {
-    const candidates = [
-        job?.createFormValues,
-        job?.CreateFormValues,
-        job?.creationFormValues,
-        job?.CreationFormValues,
-        job?.createForm?.values,
-        job?.CreateForm?.Values,
-        job?.CreationForm,
-        job?.CreationForm?.values,
-        job?.CreationForm?.Values,
-    ];
-    for (const candidate of candidates) {
-        if (!candidate) continue;
-        if (typeof candidate === 'string') {
-            const text = candidate.trim();
-            if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
-                try {
-                    return JSON.parse(text);
-                } catch {
-                    return null;
-                }
-            }
-            return null;
-        }
-        if (typeof candidate === 'object') return candidate;
-    }
-    return null;
-}
-
-function getBindingValue(bindings: Record<string, string>, candidates: string[]): string {
-    const entries = Object.entries(bindings || {});
-    for (const candidate of candidates) {
-        const normalizedCandidate = normalizeKey(candidate);
-        const found = entries.find(([k]) => normalizeKey(k) === normalizedCandidate);
-        if (found?.[1]) return found[1];
-    }
-    return '';
-}
-
 function nextValue(current: string, values: string[]): string {
     if (!values.length) return current;
     const idx = values.findIndex((v) => v === current);
     if (idx < 0) return values[0];
     return values[(idx + 1) % values.length];
+}
+
+function flattenFormioComponents(components: any[] | undefined, collector: JobTypeComponent[]) {
+    if (!Array.isArray(components)) return;
+
+    components.forEach((component) => {
+        if (!component || typeof component !== 'object') return;
+
+        const key = String(component.key || '').trim();
+        const label = String(component.label || component.title || key).trim();
+        if (key) {
+            collector.push({ key, label: label || key, raw: component });
+        }
+
+        if (Array.isArray(component.components) && component.components.length) {
+            flattenFormioComponents(component.components, collector);
+        }
+
+        if (Array.isArray(component.columns)) {
+            component.columns.forEach((column: any) => {
+                if (Array.isArray(column?.components)) {
+                    flattenFormioComponents(column.components, collector);
+                }
+            });
+        }
+
+        if (Array.isArray(component.rows)) {
+            component.rows.forEach((row: any[]) => {
+                row.forEach((cell: any) => {
+                    if (Array.isArray(cell?.components)) {
+                        flattenFormioComponents(cell.components, collector);
+                    }
+                });
+            });
+        }
+    });
 }
 
 function mapColorName(color: string): string {
@@ -351,11 +188,14 @@ export default function ApplicationSettingsPage() {
     const [workorderLoading, setWorkorderLoading] = useState(false);
     const [workorderError, setWorkorderError] = useState<string | null>(null);
     const [taskListInfo, setTaskListInfo] = useState<TaskListInfoResponse | null>(null);
-    const [jobTypes, setJobTypes] = useState<JobTypeSummary[]>([]);
-    const [selectedJobType, setSelectedJobType] = useState<string>('NRM');
-    const [allAttributes, setAllAttributes] = useState<AttributeItem[]>([]);
-    const [selectedGridAttributes, setSelectedGridAttributes] = useState<AttributeItem[]>([]);
-    const [taskGridSettingsModel, setTaskGridSettingsModel] = useState<UserSettingsModel | null>(null);
+    const [jobTypes, setJobTypes] = useState<JobTypeWithComponents[]>([]);
+    const [selectedJobTypeId, setSelectedJobTypeId] = useState<number | null>(null);
+    const [selectedCreateFormFields, setSelectedCreateFormFields] = useState<CreateFormField[]>([]);
+    const [selectedUserSettingColumns, setSelectedUserSettingColumns] = useState<UserSettingColumnRow[]>([]);
+    const [responsiveConfig, setResponsiveConfig] = useState<ResponsiveTaskListConfig | null>(null);
+    const [selectedResponsiveFields, setSelectedResponsiveFields] = useState<ResponsiveTaskListField[]>([]);
+    const [systemFields, setSystemFields] = useState<MetadataField[]>([]);
+    const [headerFields, setHeaderFields] = useState<MetadataField[]>([]);
     const [isSavingWorkorder, setIsSavingWorkorder] = useState(false);
     const [taskHeaderLeft, setTaskHeaderLeft] = useState<string>('taskName');
     const [taskHeaderRight, setTaskHeaderRight] = useState<string>('taskStatus');
@@ -382,30 +222,41 @@ export default function ApplicationSettingsPage() {
     );
 
     const fieldOptions = useMemo(() => {
-        const values = fields
-            .map((f) => String(f?.name || '').trim())
-            .filter(Boolean);
+        const metadataKeys = headerFields.map((field) => field.key);
+        const infoKeys = fields.map((field) => String(field?.name || '').trim()).filter(Boolean);
+        const values = Array.from(new Set([...metadataKeys, ...infoKeys]));
         return values.length ? values : ['taskName', 'jobId', 'taskStatus'];
-    }, [fields]);
+    }, [fields, headerFields]);
 
-    const selectedGridSet = useMemo(
-        () => new Set(selectedGridAttributes.map((item) => normalizeKey(item.key))),
-        [selectedGridAttributes]
+    const selectedJobType = useMemo(
+        () => jobTypes.find((jobType) => jobType.id === selectedJobTypeId) || null,
+        [jobTypes, selectedJobTypeId]
     );
 
-    const availableAttributes = useMemo(
-        () => allAttributes.filter((item) => !selectedGridSet.has(normalizeKey(item.key))),
-        [allAttributes, selectedGridSet]
+    const selectedCreateFormKeySet = useMemo(
+        () => new Set(selectedCreateFormFields.map((field) => normalizeKey(field.key))),
+        [selectedCreateFormFields]
     );
 
-    const responsiveFieldRows = useMemo(() => {
-        if (selectedGridAttributes.length > 0) {
-            return selectedGridAttributes
-                .slice(0, 16)
-                .map((f) => `${f.label} : ${f.displayKey || shortAttributeKey(f.key)}`);
-        }
-        return FALLBACK_WORKORDER_ROWS.slice(0, 8).map((r) => `${r.left} : ${shortAttributeKey(r.right)}`);
-    }, [selectedGridAttributes]);
+    const selectedResponsiveKeySet = useMemo(
+        () => new Set(selectedResponsiveFields.map((field) => normalizeKey(field.key))),
+        [selectedResponsiveFields]
+    );
+
+    const availableCreateFormComponents = useMemo(() => {
+        if (!selectedJobType) return [];
+        return selectedJobType.flattenedComponents.filter((component) => !selectedCreateFormKeySet.has(normalizeKey(component.key)));
+    }, [selectedCreateFormKeySet, selectedJobType]);
+
+    const availableResponsiveCreateFormComponents = useMemo(() => {
+        if (!selectedJobType) return [];
+        return selectedJobType.flattenedComponents.filter((component) => !selectedResponsiveKeySet.has(normalizeKey(component.key)));
+    }, [selectedJobType, selectedResponsiveKeySet]);
+
+    const availableSystemFields = useMemo(
+        () => systemFields.filter((field) => !selectedResponsiveKeySet.has(normalizeKey(field.key))),
+        [selectedResponsiveKeySet, systemFields]
+    );
 
     const colorRuleRows = useMemo<ColorRuleRow[]>(() => {
         const colorMappings = taskListInfo?.guiInstructions?.colorMapping;
@@ -440,133 +291,112 @@ export default function ApplicationSettingsPage() {
         setWorkorderLoading(true);
         setWorkorderError(null);
         try {
-            const [info, jobTypeResult, gridSettings, tasks] = await Promise.all([
+            const [infoResult, jobTypeResultRaw, createFormFieldsResult, metadataResult, configResult, userSettingsResult] = await Promise.allSettled([
                 getTaskListInfo(),
                 getAllJobTypesForConfiguration(),
+                getCreateFormFields(),
+                getResponsiveTaskListMetadata(true),
+                getResponsiveTaskListConfig(),
                 getUserSettings(GRID_SETTINGS_TYPE.JOB_TASK_GRID),
-                getTaskList().catch(() => []),
             ]);
 
-            setTaskListInfo(info || null);
-            setJobTypes(jobTypeResult || []);
-            setTaskGridSettingsModel(gridSettings);
+            const info = infoResult.status === 'fulfilled' ? infoResult.value : null;
+            const jobTypeResult = jobTypeResultRaw.status === 'fulfilled' ? jobTypeResultRaw.value : [];
+            const createFormFields = createFormFieldsResult.status === 'fulfilled' ? createFormFieldsResult.value : [];
+            const metadata = metadataResult.status === 'fulfilled' ? metadataResult.value : null;
+            const config = configResult.status === 'fulfilled' ? configResult.value : null;
+            const userSettings = userSettingsResult.status === 'fulfilled' ? userSettingsResult.value : null;
 
-            const names = (jobTypeResult || [])
-                .map((jt) => String(jt?.name || '').trim())
-                .filter(Boolean);
-            if (names.length > 0) {
-                setSelectedJobType((prev) => (names.includes(prev) ? prev : names[0]));
-            }
-
-            const bindings = info?.guiInstructions?.taskItemBindings || {};
-            const left = getBindingValue(bindings, ['title', 'taskName', 'middle', 'middle_1']);
-            const right = getBindingValue(bindings, ['top-right', 'topRight', 'top-Right', 'middle_2']);
-
-            if (left) setTaskHeaderLeft(left);
-            if (right) setTaskHeaderRight(right);
-
-            const attributeMap = new Map<string, AttributeItem>();
-
-            // 1) Add known enableable Task List base columns
-            ENABLEABLE_BASE_COLUMNS.forEach((col) => {
-                addAttribute(attributeMap, col.key, col.label, 'tasklist-info');
-            });
-
-            // 2) Add mapped fields from task-list-info if they resolve to enableable keys
-            (info?.fields || []).forEach((f) => {
-                const rawName = String(f?.name || '').trim();
-                if (!rawName) return;
-                const resolved = resolveToTaskListColumnKey(rawName);
-                if (!resolved) return;
-                if (LOCKED_TASKLIST_KEYS.has(normalizeKey(resolved))) return;
-                const isEnableableBase = ENABLEABLE_BASE_KEY_SET.has(normalizeKey(resolved));
-                const isDynamic = resolved.toLowerCase().startsWith('cfv_');
-                if (!isEnableableBase && !isDynamic) return;
-                const alias = String(f?.alias || '').trim();
-                addAttribute(
-                    attributeMap,
-                    resolved,
-                    alias || humanize(shortAttributeKey(resolved)),
-                    'tasklist-info',
-                    shortAttributeKey(rawName)
-                );
-            });
-
-            // 3) Dynamic fields from job details createFormValues -> TaskList dynamic cfv_* keys
-            const jobIds = Array.from(
-                new Set(
-                    (Array.isArray(tasks) ? tasks : [])
-                        .map((t: any) => Number(t?.jobId ?? t?.JobId ?? t?.jobID ?? t?.JobID ?? 0))
-                        .filter((id: number) => Number.isFinite(id) && id > 0)
-                )
-            ).slice(0, 8);
-
-            const jobs = await Promise.all(
-                jobIds.map(async (id) => {
-                    try {
-                        return await getJobDetails(id);
-                    } catch {
-                        return null;
-                    }
-                })
+            console.log(
+                '[ApplicationSettings][Workorder] user settings response:',
+                JSON.stringify(userSettings, null, 2)
             );
 
-            jobs.forEach((job) => {
-                if (!job) return;
+            setTaskListInfo(info || null);
+            const enrichedJobTypes = (jobTypeResult || []).map((jobType) => {
+                const flattenedComponents: JobTypeComponent[] = [];
+                flattenFormioComponents(jobType?.creationForm?.components, flattenedComponents);
+                const dedupedComponents = flattenedComponents.filter((component, index, arr) =>
+                    arr.findIndex((item) => normalizeKey(item.key) === normalizeKey(component.key)) === index
+                );
+                return {
+                    ...jobType,
+                    flattenedComponents: dedupedComponents,
+                };
+            }).filter((jobType) => jobType.flattenedComponents.length > 0);
 
-                const createFormValues = tryGetCreateFormValues(job);
-                if (createFormValues) {
-                    const keys = new Set<string>();
-                    flattenCreateFormValueKeys(createFormValues, keys);
-                    keys.forEach((rawKey) => {
-                        const cfvKey = createFormColumnKey(rawKey);
-                        addAttribute(attributeMap, cfvKey, humanize(rawKey), 'create-form', rawKey);
-                    });
-                }
-            });
+            setJobTypes(enrichedJobTypes);
+            setSelectedCreateFormFields(Array.isArray(createFormFields) ? createFormFields : []);
+            const userColumns = Array.isArray(userSettings?.settings?.columns)
+                ? userSettings!.settings.columns
+                    .map((column, index) => ({
+                        ...column,
+                        __sourceIndex: index,
+                    }))
+                    .sort((a, b) => {
+                        const aOrder = a?.order ?? a?.index ?? a?.position;
+                        const bOrder = b?.order ?? b?.index ?? b?.position;
+                        if (aOrder === undefined && bOrder === undefined) {
+                            return a.__sourceIndex - b.__sourceIndex;
+                        }
+                        if (aOrder === undefined) return 1;
+                        if (bOrder === undefined) return -1;
+                        return Number(aOrder) - Number(bOrder);
+                    })
+                : [];
+            console.log(
+                '[ApplicationSettings][Workorder] user settings columns:',
+                userColumns.length,
+                userColumns.map((column) => column.name || column.key || column.field || column.columnKey)
+            );
+            setSelectedUserSettingColumns(userColumns);
+            setResponsiveConfig(config || {});
+            setSelectedResponsiveFields(Array.isArray(config?.fields) ? config.fields : []);
 
-            const allAttrs = Array.from(attributeMap.values()).sort((a, b) => a.label.localeCompare(b.label));
-            setAllAttributes(allAttrs);
+            const conditionalAttributes = metadata?.conditionalAttributes || {};
+            const nextHeaderFields = Object.keys(conditionalAttributes)
+                .map((key) => ({
+                    key,
+                    name: String(conditionalAttributes[key]?.name || key),
+                    phone: conditionalAttributes[key]?.format === 'tel',
+                }))
+                .filter((field) => !field.phone)
+                .map(({ key, name }) => ({ key, name }));
+            const nextSystemFields = Object.keys(conditionalAttributes)
+                .filter((key) => !key.startsWith('createForm'))
+                .map((key) => ({
+                    key: `systemField.${key}`,
+                    name: String(conditionalAttributes[key]?.name || key),
+                }));
 
-            // 4) Right side selected values from user grid settings (visible columns)
-            const settingsColumns = gridSettings?.settings?.columns || [];
-            const selectedKeySet = new Set<string>();
-            const selectedFromSettings = settingsColumns
-                .filter(isSettingsColumnVisible)
-                .sort((a, b) => readSettingsColumnOrder(a) - readSettingsColumnOrder(b))
-                .map((col) => {
-                    const rawKey = readSettingsColumnKey(col);
-                    if (!rawKey) return null;
-                    const resolved = resolveToTaskListColumnKey(rawKey);
-                    if (!resolved) return null;
-                    if (LOCKED_TASKLIST_KEYS.has(normalizeKey(resolved))) return null;
-                    const isEnableableBase = ENABLEABLE_BASE_KEY_SET.has(normalizeKey(resolved));
-                    const isDynamic = resolved.toLowerCase().startsWith('cfv_');
-                    if (!isEnableableBase && !isDynamic) return null;
+            setHeaderFields(nextHeaderFields);
+            setSystemFields(nextSystemFields);
+            setTaskHeaderLeft(config?.responsiveTaskListHeaderPrimaryTitle || nextHeaderFields[0]?.key || 'taskName');
+            setTaskHeaderRight(config?.responsiveTaskListHeaderSecondaryTitle || nextHeaderFields[1]?.key || nextHeaderFields[0]?.key || 'taskStatus');
 
-                    const resolvedNorm = normalizeKey(resolved);
-                    if (selectedKeySet.has(resolvedNorm)) return null;
-                    selectedKeySet.add(resolvedNorm);
+            if (enrichedJobTypes.length > 0) {
+                setSelectedJobTypeId((prev) => {
+                    if (prev && enrichedJobTypes.some((jobType) => jobType.id === prev)) return prev;
+                    return enrichedJobTypes[0].id;
+                });
+            }
 
-                    const existing = attributeMap.get(resolvedNorm);
-                    if (existing) return existing;
-                    const fallback: AttributeItem = {
-                        key: resolved,
-                        label: humanize(shortAttributeKey(resolved)),
-                        displayKey: shortAttributeKey(rawKey),
-                        source: 'grid-settings',
-                    };
-                    addAttribute(attributeMap, fallback.key, fallback.label, fallback.source, fallback.displayKey);
-                    return fallback;
-                })
-                .filter((x): x is AttributeItem => x !== null);
+            const failedSources: string[] = [];
+            if (infoResult.status === 'rejected') failedSources.push(`task list info (${infoResult.reason?.message || 'request failed'})`);
+            if (jobTypeResultRaw.status === 'rejected') failedSources.push(`job types (${jobTypeResultRaw.reason?.message || 'request failed'})`);
+            if (userSettingsResult.status === 'rejected') failedSources.push(`user settings (${userSettingsResult.reason?.message || 'request failed'})`);
 
-            setSelectedGridAttributes(selectedFromSettings);
+            const hasAnyWorkorderData =
+                enrichedJobTypes.length > 0 ||
+                userColumns.length > 0 ||
+                Object.keys(conditionalAttributes).length > 0 ||
+                (Array.isArray(config?.fields) && config.fields.length > 0);
 
-            console.log('[ApplicationSettings][Workorder] tasklist info loaded:', info);
-            console.log('[ApplicationSettings][Workorder] job types loaded:', jobTypeResult);
-            console.log('[ApplicationSettings][Workorder] grid settings loaded:', gridSettings);
-            console.log('[ApplicationSettings][Workorder] available attributes extracted:', allAttrs.length);
+            if (!hasAnyWorkorderData) {
+                setWorkorderError('Could not load Workorder Configuration from the current API.');
+            } else if (failedSources.length > 0) {
+                setWorkorderError(`Some Workorder Configuration sources are unavailable on this API: ${failedSources.join(', ')}.`);
+            }
         } catch (err: any) {
             console.log('[ApplicationSettings][Workorder] load failed:', err?.response?.status, err?.response?.data || err?.message);
             setWorkorderError('Could not load Workorder Configuration from API.');
@@ -575,100 +405,82 @@ export default function ApplicationSettingsPage() {
         }
     }, []);
 
-    const addToGridSelection = useCallback((item: AttributeItem) => {
-        setSelectedGridAttributes((prev) => {
-            if (prev.some((x) => normalizeKey(x.key) === normalizeKey(item.key))) return prev;
-            return [...prev, item];
+    const addCreateFormField = useCallback((component: JobTypeComponent) => {
+        if (!selectedJobType) return;
+        setSelectedCreateFormFields((prev) => {
+            if (prev.some((field) => normalizeKey(field.key) === normalizeKey(component.key))) return prev;
+            return [
+                ...prev,
+                {
+                    key: component.key,
+                    name: component.label,
+                    jobTypeId: selectedJobType.id,
+                    jobTypeName: selectedJobType.name,
+                    isResponsive: false,
+                    isDate: !!component.raw?.datePicker,
+                    order: prev.length,
+                    format: component.raw?.format,
+                },
+            ];
+        });
+    }, [selectedJobType]);
+
+    const addResponsiveField = useCallback((field: MetadataField) => {
+        setSelectedResponsiveFields((prev) => {
+            if (prev.some((item) => normalizeKey(item.key) === normalizeKey(field.key))) return prev;
+            return [
+                ...prev,
+                {
+                    key: field.key,
+                    name: field.name,
+                    order: prev.length,
+                    rowNumber: 0,
+                },
+            ];
         });
     }, []);
 
-    const removeFromGridSelection = useCallback((key: string) => {
-        setSelectedGridAttributes((prev) => prev.filter((x) => normalizeKey(x.key) !== normalizeKey(key)));
+    const removeResponsiveField = useCallback((key: string) => {
+        setSelectedResponsiveFields((prev) => prev.filter((field) => normalizeKey(field.key) !== normalizeKey(key)));
     }, []);
 
     const saveWorkorderGridSelection = useCallback(async () => {
         if (isSavingWorkorder) return;
         try {
             setIsSavingWorkorder(true);
-            const previous = taskGridSettingsModel?.settings || {};
-            const previousColumns = Array.isArray(previous.columns) ? previous.columns : [];
-            const previousByKey = new Map<string, UserGridColumnSetting>();
-            previousColumns.forEach((col) => {
-                const raw = readSettingsColumnKey(col);
-                if (!raw) return;
-                const resolved = resolveToTaskListColumnKey(raw);
-                if (!resolved) return;
-                previousByKey.set(normalizeKey(resolved), col);
-            });
+            const nonResponsiveFields = selectedCreateFormFields.map((field, index) => ({
+                ...field,
+                order: index,
+                isResponsive: false,
+            }));
+            const responsiveFields = selectedResponsiveFields.map((field, index) => ({
+                ...field,
+                order: index,
+                rowNumber: 0,
+            }));
 
-            const selectedKeySet = new Set(
-                selectedGridAttributes.map((item) => normalizeKey(resolveToTaskListColumnKey(item.key)))
-            );
-            const enableableKeySet = new Set(allAttributes.map((item) => normalizeKey(item.key)));
+            const [savedCreateFormFields, savedResponsiveConfig] = await Promise.all([
+                saveCreateFormFields(nonResponsiveFields),
+                saveResponsiveTaskListConfig({
+                    ...(responsiveConfig || {}),
+                    fields: responsiveFields,
+                    responsiveTaskListHeaderPrimaryTitle: taskHeaderLeft,
+                    responsiveTaskListHeaderSecondaryTitle: taskHeaderRight,
+                }),
+            ]);
 
-            const selectedColumns: UserGridColumnSetting[] = selectedGridAttributes.map((item, index) => {
-                const resolvedKey = resolveToTaskListColumnKey(item.key);
-                const existing = previousByKey.get(normalizeKey(resolvedKey)) || {};
-                return {
-                    ...existing,
-                    name: resolvedKey,
-                    visible: true,
-                    hidden: false,
-                    width: Number(existing?.width) || GRID_DEFAULT_COLUMN_WIDTH,
-                    order: index,
-                };
-            });
+            setSelectedCreateFormFields(savedCreateFormFields);
+            setResponsiveConfig(savedResponsiveConfig);
+            setSelectedResponsiveFields(Array.isArray(savedResponsiveConfig?.fields) ? savedResponsiveConfig.fields : []);
 
-            const hiddenEnableableColumns: UserGridColumnSetting[] = previousColumns
-                .filter((col) => {
-                    const raw = readSettingsColumnKey(col);
-                    if (!raw) return false;
-                    const resolved = resolveToTaskListColumnKey(raw);
-                    if (!resolved) return false;
-                    if (LOCKED_TASKLIST_KEYS.has(normalizeKey(resolved))) return false;
-                    if (!enableableKeySet.has(normalizeKey(resolved))) return false;
-                    return !selectedKeySet.has(normalizeKey(resolved));
-                })
-                .map((col, idx) => ({
-                    ...col,
-                    visible: false,
-                    hidden: true,
-                    order: selectedColumns.length + idx,
-                }));
-
-            const untouchedColumns: UserGridColumnSetting[] = previousColumns
-                .filter((col) => {
-                    const raw = readSettingsColumnKey(col);
-                    if (!raw) return false;
-                    const resolved = resolveToTaskListColumnKey(raw);
-                    if (!resolved) return false;
-                    return !enableableKeySet.has(normalizeKey(resolved)) || LOCKED_TASKLIST_KEYS.has(normalizeKey(resolved));
-                });
-
-            const nextSettings = {
-                ...previous,
-                columns: [...selectedColumns, ...hiddenEnableableColumns, ...untouchedColumns],
-            };
-
-            await saveUserSettings({
-                settingsType: GRID_SETTINGS_TYPE.JOB_TASK_GRID,
-                settings: nextSettings,
-                customWidgetId: taskGridSettingsModel?.customWidgetId ?? null,
-            });
-
-            setTaskGridSettingsModel({
-                settingsType: GRID_SETTINGS_TYPE.JOB_TASK_GRID,
-                settings: nextSettings,
-                customWidgetId: taskGridSettingsModel?.customWidgetId ?? null,
-            });
-
-            console.log('[ApplicationSettings][Workorder] grid selection saved.');
+            console.log('[ApplicationSettings][Workorder] configuration saved.');
         } catch (err: any) {
             console.log('[ApplicationSettings][Workorder] save failed:', err?.response?.status, err?.response?.data || err?.message);
+            setWorkorderError('Could not save Workorder Configuration.');
         } finally {
             setIsSavingWorkorder(false);
         }
-    }, [allAttributes, isSavingWorkorder, selectedGridAttributes, taskGridSettingsModel]);
+    }, [isSavingWorkorder, responsiveConfig, selectedCreateFormFields, selectedResponsiveFields, taskHeaderLeft, taskHeaderRight]);
 
     useEffect(() => {
         if (activeTab !== 'workorder' || loadedWorkorderRef.current) return;
@@ -696,7 +508,7 @@ export default function ApplicationSettingsPage() {
                         style={[s.tabBtn, activeTab === tab.key ? s.tabBtnActive : null]}
                         onPress={() => setActiveTab(tab.key)}
                     >
-                        <Text style={[s.tabText, activeTab === tab.key ? s.tabTextActive : null]}>{tab.label}</Text>
+                        <Text numberOfLines={1} style={[s.tabText, activeTab === tab.key ? s.tabTextActive : null]}>{tab.label}</Text>
                     </TouchableOpacity>
                 ))}
             </ScrollView>
@@ -732,32 +544,32 @@ export default function ApplicationSettingsPage() {
                             <View style={[s.workorderSplit, isDesktop ? s.workorderSplitDesktop : null]}>
                                 <View style={s.workorderPaneLeft}>
                                     <ScrollView horizontal style={s.jobTypeTabs} contentContainerStyle={s.jobTypeTabsContent}>
-                                        {(jobTypes.length ? jobTypes : [{ id: 0, name: 'NRM' }]).map((jt) => {
+                                        {jobTypes.map((jt) => {
                                             const name = String(jt?.name || 'NRM').trim() || 'NRM';
-                                            const selected = selectedJobType === name;
+                                            const selected = selectedJobTypeId === jt.id;
                                             return (
                                                 <TouchableOpacity
                                                     key={`${jt.id}-${name}`}
                                                     style={[s.jobTypeChip, selected ? s.jobTypeChipSelected : null]}
-                                                    onPress={() => setSelectedJobType(name)}
+                                                    onPress={() => setSelectedJobTypeId(jt.id)}
                                                 >
                                                     <Text style={[s.jobTypeChipText, selected ? s.jobTypeChipTextSelected : null]}>{name}</Text>
                                                 </TouchableOpacity>
                                             );
                                         })}
                                     </ScrollView>
-                                    <ScrollView style={s.paneScroller}>
-                                        {availableAttributes.length === 0 ? (
+                                    <ScrollView style={s.paneScroller} contentContainerStyle={s.paneScrollerContent}>
+                                        {availableCreateFormComponents.length === 0 ? (
                                             <View style={s.emptyAttributeRow}>
-                                                <Text style={s.emptyAttributeText}>No available attributes found.</Text>
+                                                <Text style={s.emptyAttributeText}>No available create form fields for this job type.</Text>
                                             </View>
                                         ) : (
-                                            availableAttributes.map((item) => (
+                                            availableCreateFormComponents.map((item) => (
                                                 <View key={`left-${item.key}`} style={s.workorderMapRow}>
                                                     <Text numberOfLines={1} style={s.workorderMapRowText}>
-                                                        {item.label} : {item.displayKey || shortAttributeKey(item.key)}
+                                                        {item.label} : {item.key}
                                                     </Text>
-                                                    <TouchableOpacity style={s.iconActionBtn} onPress={() => addToGridSelection(item)}>
+                                                    <TouchableOpacity style={s.iconActionBtn} onPress={() => addCreateFormField(item)}>
                                                         <Ionicons name="add-outline" size={16} color="#111" />
                                                     </TouchableOpacity>
                                                 </View>
@@ -766,24 +578,53 @@ export default function ApplicationSettingsPage() {
                                     </ScrollView>
                                 </View>
                                 <View style={s.workorderPaneRight}>
-                                    <ScrollView style={s.paneScroller}>
-                                        {selectedGridAttributes.length === 0 ? (
-                                            <View style={s.emptyAttributeRow}>
-                                                <Text style={s.emptyAttributeText}>No selected grid attributes.</Text>
-                                            </View>
-                                        ) : (
-                                            selectedGridAttributes.map((item) => (
-                                            <View key={`right-${item.key}`} style={s.workorderMapRow}>
-                                                <Text numberOfLines={1} style={s.workorderMapRowText}>
-                                                    {item.label} : {item.displayKey || shortAttributeKey(item.key)}
-                                                </Text>
-                                                <TouchableOpacity style={s.iconActionBtn} onPress={() => removeFromGridSelection(item.key)}>
-                                                    <Ionicons name="close-outline" size={17} color="#111" />
-                                                </TouchableOpacity>
-                                            </View>
-                                            ))
-                                        )}
-                                    </ScrollView>
+                                    <View style={s.paneInfoBar}>
+                                        <Text style={s.paneInfoText}>Columns: {selectedUserSettingColumns.length}</Text>
+                                    </View>
+                                    {Platform.OS === 'web' ? (
+                                        <View style={s.userSettingsWebScroll}>
+                                            {selectedUserSettingColumns.length === 0 ? (
+                                                <View style={s.emptyAttributeRow}>
+                                                    <Text style={s.emptyAttributeText}>No columns found in user settings.</Text>
+                                                </View>
+                                            ) : (
+                                                selectedUserSettingColumns.map((item, index) => (
+                                                    <View key={`right-${item.name || item.key || item.columnKey || index}`} style={s.workorderMapRow}>
+                                                        <Text numberOfLines={1} style={s.workorderMapRowText}>
+                                                            {String(item.name || item.key || item.field || item.columnKey || '').trim()}
+                                                        </Text>
+                                                        <Text style={[s.columnVisibilityTag, item.visible === false || item.hidden === true ? s.columnVisibilityTagHidden : null]}>
+                                                            {item.visible === false || item.hidden === true ? 'Hidden' : 'Visible'}
+                                                        </Text>
+                                                    </View>
+                                                ))
+                                            )}
+                                        </View>
+                                    ) : (
+                                        <ScrollView
+                                            style={s.userSettingsNativeScroll}
+                                            contentContainerStyle={s.paneScrollerContent}
+                                            showsVerticalScrollIndicator
+                                            nestedScrollEnabled
+                                        >
+                                            {selectedUserSettingColumns.length === 0 ? (
+                                                <View style={s.emptyAttributeRow}>
+                                                    <Text style={s.emptyAttributeText}>No columns found in user settings.</Text>
+                                                </View>
+                                            ) : (
+                                                selectedUserSettingColumns.map((item, index) => (
+                                                    <View key={`right-${item.name || item.key || item.columnKey || index}`} style={s.workorderMapRow}>
+                                                        <Text numberOfLines={1} style={s.workorderMapRowText}>
+                                                            {String(item.name || item.key || item.field || item.columnKey || '').trim()}
+                                                        </Text>
+                                                        <Text style={[s.columnVisibilityTag, item.visible === false || item.hidden === true ? s.columnVisibilityTagHidden : null]}>
+                                                            {item.visible === false || item.hidden === true ? 'Hidden' : 'Visible'}
+                                                        </Text>
+                                                    </View>
+                                                ))
+                                            )}
+                                        </ScrollView>
+                                    )}
                                 </View>
                             </View>
                         </SectionCard>
@@ -792,18 +633,47 @@ export default function ApplicationSettingsPage() {
                             <View style={[s.workorderSplit, isDesktop ? s.workorderSplitDesktop : null]}>
                                 <View style={s.workorderPaneLeft}>
                                     <View style={s.jobTypeRow}>
-                                        <Text style={s.jobTypeText}>{selectedJobType || 'NRM'}</Text>
+                                        <Text style={s.jobTypeText}>{selectedJobType?.name || 'No Job Type'}</Text>
                                     </View>
+                                    <ScrollView style={s.paneScroller} contentContainerStyle={s.paneScrollerContent}>
+                                        {availableResponsiveCreateFormComponents.map((field) => (
+                                            <View key={`responsive-create-${field.key}`} style={s.workorderMapRow}>
+                                                <Text numberOfLines={1} style={s.workorderMapRowText}>
+                                                    {field.label} : {field.key}
+                                                </Text>
+                                                <TouchableOpacity style={s.iconActionBtn} onPress={() => addResponsiveField({ key: field.key, name: field.label })}>
+                                                    <Ionicons name="add-outline" size={16} color="#111" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        ))}
                                     <View style={s.jobTypeRow}>
                                         <Text style={s.jobTypeText}>SYSTEM FIELDS</Text>
                                     </View>
+                                        {availableSystemFields.map((field) => (
+                                            <View key={`system-${field.key}`} style={s.workorderMapRow}>
+                                                <Text numberOfLines={1} style={s.workorderMapRowText}>
+                                                    {field.name} : {field.key}
+                                                </Text>
+                                                <TouchableOpacity style={s.iconActionBtn} onPress={() => addResponsiveField(field)}>
+                                                    <Ionicons name="add-outline" size={16} color="#111" />
+                                                </TouchableOpacity>
+                                            </View>
+                                        ))}
+                                    </ScrollView>
                                 </View>
                                 <View style={s.workorderPaneRight}>
                                     <Text style={s.selectedFieldsTitle}>Selected fields</Text>
-                                    <ScrollView style={s.paneScroller}>
-                                        {responsiveFieldRows.map((label, idx) => (
-                                            <View key={`${label}-${idx}`} style={s.selectedFieldRow}>
-                                                <Text style={s.selectedFieldText}>{label}</Text>
+                                    <ScrollView style={s.paneScroller} contentContainerStyle={s.paneScrollerContent}>
+                                        {selectedResponsiveFields.length === 0 ? (
+                                            <View style={s.emptyAttributeRow}>
+                                                <Text style={s.emptyAttributeText}>No responsive fields selected.</Text>
+                                            </View>
+                                        ) : selectedResponsiveFields.map((field) => (
+                                            <View key={`${field.key}`} style={s.workorderMapRow}>
+                                                <Text style={s.selectedFieldText}>{field.name} : {field.key}</Text>
+                                                <TouchableOpacity style={s.iconActionBtn} onPress={() => removeResponsiveField(field.key)}>
+                                                    <Ionicons name="close-outline" size={17} color="#111" />
+                                                </TouchableOpacity>
                                             </View>
                                         ))}
                                     </ScrollView>
@@ -832,7 +702,7 @@ export default function ApplicationSettingsPage() {
                         </SectionCard>
 
                         <SectionCard title="Task/workorder list color rules" darkHeader>
-                            <ScrollView style={s.paneScroller}>
+                            <ScrollView style={s.paneScroller} contentContainerStyle={s.paneScrollerContent}>
                                 {colorRuleRows.map((rule) => (
                                     <View key={rule.id} style={s.colorRuleRow}>
                                         <View style={[s.colorSwatch, { backgroundColor: mapColorName(rule.color) }]}>
@@ -930,15 +800,27 @@ const s = StyleSheet.create({
         backgroundColor: '#ffffff',
         borderBottomWidth: 1,
         borderBottomColor: '#1f2438',
+        minHeight: 56,
+        maxHeight: 56,
+        flexGrow: 0,
     },
-    tabRowContent: { paddingHorizontal: 8, paddingVertical: 8, gap: 8 },
+    tabRowContent: {
+        paddingHorizontal: 8,
+        paddingVertical: 8,
+        gap: 8,
+        alignItems: 'center',
+    },
     tabBtn: {
         backgroundColor: '#f5f6f7',
         borderRadius: 0,
         borderWidth: 1,
         borderColor: '#d5d8df',
         paddingHorizontal: 12,
-        paddingVertical: 8,
+        height: 40,
+        minHeight: 40,
+        maxHeight: 40,
+        justifyContent: 'center',
+        alignSelf: 'flex-start',
     },
     tabBtnActive: {
         backgroundColor: '#22263b',
@@ -1012,7 +894,10 @@ const s = StyleSheet.create({
     workorderErrorText: { color: '#8f2c2c', fontSize: 12, flex: 1 },
     workorderRetry: { color: '#0f569b', fontSize: 12, fontWeight: '700' },
     workorderSplit: { gap: 8 },
-    workorderSplitDesktop: { flexDirection: 'row' },
+    workorderSplitDesktop: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+    },
     workorderPaneLeft: {
         flex: 1,
         minHeight: 180,
@@ -1059,7 +944,36 @@ const s = StyleSheet.create({
         color: '#122643',
         fontWeight: '700',
     },
-    paneScroller: { maxHeight: 240 },
+    paneScroller: {
+        maxHeight: 320,
+        flexGrow: 0,
+    },
+    paneScrollerContent: {
+        paddingBottom: 20,
+    },
+    paneInfoBar: {
+        minHeight: 30,
+        justifyContent: 'center',
+        paddingHorizontal: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#d5d5d5',
+        backgroundColor: '#e7eaef',
+    },
+    paneInfoText: {
+        color: '#374151',
+        fontSize: 11,
+        fontWeight: '700',
+    },
+    userSettingsWebScroll: {
+        height: 420,
+        maxHeight: 420,
+        overflow: 'scroll',
+    },
+    userSettingsNativeScroll: {
+        height: 420,
+        maxHeight: 420,
+        paddingBottom: 20,
+    },
     jobTypeRow: {
         minHeight: 34,
         justifyContent: 'center',
@@ -1082,6 +996,21 @@ const s = StyleSheet.create({
         gap: 8,
     },
     workorderMapRowText: { flex: 1, color: '#222', fontSize: 12 },
+    columnVisibilityTag: {
+        borderWidth: 1,
+        borderColor: '#96b2d1',
+        backgroundColor: '#e2edf8',
+        color: '#12385f',
+        fontSize: 10,
+        fontWeight: '700',
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+    },
+    columnVisibilityTagHidden: {
+        borderColor: '#c9cfd8',
+        backgroundColor: '#eef1f4',
+        color: '#677284',
+    },
     emptyAttributeRow: {
         minHeight: 40,
         justifyContent: 'center',

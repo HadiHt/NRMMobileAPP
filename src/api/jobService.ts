@@ -1,5 +1,15 @@
 import apiClient from './apiClient';
 
+const JOB_DETAIL_CACHE_TTL_MS = 10 * 60 * 1000;
+
+type JobDetailCacheEntry = {
+    data: JobDetail;
+    timestamp: number;
+};
+
+const jobDetailCache = new Map<number, JobDetailCacheEntry>();
+const jobDetailInFlight = new Map<number, Promise<JobDetail>>();
+
 export interface JobDetail {
     Id: number;
     Description: string;
@@ -20,8 +30,30 @@ export interface JobDetail {
  * Get job details by ID (used by mobile)
  */
 export async function getJobDetails(id: number): Promise<JobDetail> {
-    const response = await apiClient.get(`/api/job/${id}`);
-    return response.data;
+    const cached = jobDetailCache.get(id);
+    if (cached && Date.now() - cached.timestamp < JOB_DETAIL_CACHE_TTL_MS) {
+        return cached.data;
+    }
+
+    const existingRequest = jobDetailInFlight.get(id);
+    if (existingRequest) {
+        return existingRequest;
+    }
+
+    const request = apiClient.get(`/api/job/${id}`)
+        .then((response) => {
+            jobDetailCache.set(id, {
+                data: response.data,
+                timestamp: Date.now(),
+            });
+            return response.data;
+        })
+        .finally(() => {
+            jobDetailInFlight.delete(id);
+        });
+
+    jobDetailInFlight.set(id, request);
+    return request;
 }
 
 /**

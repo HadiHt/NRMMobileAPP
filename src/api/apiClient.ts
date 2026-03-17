@@ -3,7 +3,7 @@ import { TokenStorage } from '../auth/TokenStorage';
 
 // Base URL for the W4 API
 // Update this to your production/staging URL
-const BASE_URL = 'https://wfm-w4-api-test.azurewebsites.net';
+export const API_BASE_URL = 'https://wfm-w4-api-test.azurewebsites.net';
 
 const TOKEN_KEY = 'auth_access_token';
 
@@ -14,7 +14,7 @@ export function setTokenRefreshCallback(cb: () => Promise<string | null>) {
 }
 
 const apiClient: AxiosInstance = axios.create({
-    baseURL: BASE_URL,
+    baseURL: API_BASE_URL,
     timeout: 30000,
     headers: {
         'Content-Type': 'application/json',

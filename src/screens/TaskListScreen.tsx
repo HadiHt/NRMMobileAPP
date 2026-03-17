@@ -45,6 +45,14 @@ const DASHBOARD_MENU_OPTIONS: { key: string; label: string; icon: keyof typeof I
 
 // Table column definitions matching the web UI
 type TableColumn = { key: string; label: string; width: number };
+type ColumnMenuItem = {
+    id: string;
+    key: string;
+    label: string;
+    width: number;
+    visible: boolean;
+    localKey: string | null;
+};
 
 const BASE_COLUMNS: TableColumn[] = [
     { key: 'taskId', label: 'ID', width: IS_WEB ? 44 : 60 },
@@ -74,6 +82,19 @@ const STATUS_MAP: Record<number, string> = {
 };
 
 type SortDirection = 'asc' | 'desc' | null;
+type TaskScreenMode = 'active' | 'completed';
+
+const TASK_SCREEN_CACHE_TTL_MS = 60 * 1000;
+
+type TaskScreenSnapshot = {
+    tasks: TaskListItem[];
+    actualColumns: TableColumn[];
+    columnVisibility: Record<string, boolean>;
+    sortState: { key: string | null; direction: SortDirection };
+    timestamp: number;
+};
+
+const TASK_SCREEN_CACHE = new Map<TaskScreenMode, TaskScreenSnapshot>();
 
 const FIELD_MAPPING: Record<string, string[]> = {
     taskId: ['taskId', 'taskIdDisplayedToUser', 'TaskId', 'id', 'Id'],
@@ -140,23 +161,12 @@ const FIELD_MAPPING: Record<string, string[]> = {
 type TaskIndexEntry = { value: any; matchedKey: string };
 const TASK_SEARCH_INDEX_CACHE = new WeakMap<object, Record<string, TaskIndexEntry>>();
 
-function safeStringify(value: any): string {
-    const seen = new WeakSet<object>();
-    try {
-        return JSON.stringify(
-            value,
-            (key, val) => {
-                if (typeof val === 'object' && val !== null) {
-                    if (seen.has(val)) return '[Circular]';
-                    seen.add(val);
-                }
-                return val;
-            },
-            2
-        );
-    } catch (err: any) {
-        return `<<unserializable: ${err?.message || 'unknown error'}>>`;
-    }
+function getTaskScreenSnapshot(mode: TaskScreenMode): TaskScreenSnapshot | null {
+    return TASK_SCREEN_CACHE.get(mode) || null;
+}
+
+function isTaskScreenSnapshotFresh(snapshot: TaskScreenSnapshot | null): boolean {
+    return !!snapshot && Date.now() - snapshot.timestamp < TASK_SCREEN_CACHE_TTL_MS;
 }
 
 function normalizeKeyName(key: string): string {
@@ -667,9 +677,12 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isColumnMenuOpen, setIsColumnMenuOpen] = useState(false);
     const [isSavingGrid, setIsSavingGrid] = useState(false);
+    const [settingsColumnsForMenu, setSettingsColumnsForMenu] = useState<any[]>([]);
     const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(
         () => Object.fromEntries(BASE_COLUMNS.map((col) => [col.key, true]))
     );
+    const actualColumnsRef = useRef<TableColumn[]>(BASE_COLUMNS);
+    const columnVisibilityRef = useRef<Record<string, boolean>>(Object.fromEntries(BASE_COLUMNS.map((col) => [col.key, true])));
     const jobCreateFormCacheRef = useRef<Map<number, Record<string, any>>>(new Map());
     const loadedSettingsRef = useRef<UserGridSettings | null>(null);
     const hasAttemptedSettingsLoadRef = useRef(false);
@@ -682,10 +695,66 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
         () => actualColumns.filter((col) => columnVisibility[col.key] !== false),
         [actualColumns, columnVisibility]
     );
-    const togglableColumns = useMemo(
-        () => actualColumns.filter((col) => !lockedColumnSet.has(col.key)),
-        [actualColumns, lockedColumnSet]
-    );
+    const togglableColumns = useMemo<ColumnMenuItem[]>(() => {
+        if (settingsColumnsForMenu.length > 0) {
+            const actualByKey = new Map(actualColumns.map((col) => [col.key, col]));
+            return settingsColumnsForMenu.map((colSetting, index) => {
+                const rawName = getColumnSettingKey(colSetting) || `column_${index + 1}`;
+                const localKey = resolveSettingsColumnKeyToLocalKey(rawName, actualColumns);
+                const mappedColumn = localKey ? actualByKey.get(localKey) : undefined;
+                const visibleFromSettings = getColumnSettingVisible(colSetting);
+                const visible = visibleFromSettings !== null
+                    ? visibleFromSettings
+                    : localKey
+                        ? columnVisibility[localKey] !== false
+                        : true;
+                const labelSource = rawName.toLowerCase().startsWith('data.')
+                    ? rawName.slice(5)
+                    : rawName.replace(/^standard\./i, '');
+
+                return {
+                    id: `${normalizeKeyName(rawName)}-${index}`,
+                    key: rawName,
+                    label: mappedColumn?.label || toSpacedLabel(labelSource),
+                    width: mappedColumn?.width ?? getColumnSettingWidth(colSetting) ?? (IS_WEB ? 96 : 140),
+                    visible,
+                    localKey,
+                };
+            });
+        }
+
+        return actualColumns
+            .filter((col) => !lockedColumnSet.has(col.key))
+            .map((col) => ({
+                id: col.key,
+                key: col.key,
+                label: col.label,
+                width: col.width,
+                visible: columnVisibility[col.key] !== false,
+                localKey: col.key,
+            }));
+    }, [actualColumns, columnVisibility, lockedColumnSet, settingsColumnsForMenu]);
+    const cachedSnapshot = useMemo(() => getTaskScreenSnapshot(mode), [mode]);
+
+    const applySnapshot = useCallback((snapshot: TaskScreenSnapshot) => {
+        isApplyingSettingsRef.current = true;
+        setTasks(snapshot.tasks);
+        setActualColumns(snapshot.actualColumns);
+        setColumnVisibility(snapshot.columnVisibility);
+        setSortState(snapshot.sortState);
+        setLoading(false);
+        setTimeout(() => {
+            isApplyingSettingsRef.current = false;
+        }, 0);
+    }, []);
+
+    useEffect(() => {
+        actualColumnsRef.current = actualColumns;
+    }, [actualColumns]);
+
+    useEffect(() => {
+        columnVisibilityRef.current = columnVisibility;
+    }, [columnVisibility]);
 
     const enrichTasksWithJobData = useCallback(async (sourceTasks: TaskListItem[]) => {
         const uniqueJobIds = Array.from(
@@ -702,19 +771,6 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                 idsToFetch.map(async (id) => {
                     try {
                         const job = await getJobDetails(id);
-                        console.log(`[TaskList][Job ${id}] Parent job object:\n${safeStringify(job)}`);
-                        console.log(
-                            `[TaskList][Job ${id}] createFormValues candidates:\n${safeStringify({
-                                createFormValues: job?.createFormValues,
-                                CreateFormValues: job?.CreateFormValues,
-                                creationFormValues: job?.creationFormValues,
-                                CreationFormValues: job?.CreationFormValues,
-                                createForm: job?.createForm,
-                                CreateForm: job?.CreateForm,
-                                creationForm: job?.creationForm,
-                                CreationForm: job?.CreationForm,
-                            })}`
-                        );
                         return { id, values: getCreateFormValues(job) };
                     } catch {
                         return { id, values: {} as Record<string, any> };
@@ -798,13 +854,17 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
         });
     }, [lockedColumnSet]);
 
-    const renderColumnToggleItem = useCallback(({ item: col }: { item: { key: string; label: string; width: number } }) => {
-        const isVisible = columnVisibility[col.key] !== false;
+    const renderColumnToggleItem = useCallback(({ item: col }: { item: ColumnMenuItem }) => {
+        const canToggle = !!col.localKey && !lockedColumnSet.has(col.localKey);
+        const isVisible = col.visible;
         return (
             <TouchableOpacity
-                style={s.menuItem}
-                onPress={() => toggleColumnVisibility(col.key)}
-                activeOpacity={0.8}
+                style={[s.menuItem, !canToggle ? s.menuItemDisabled : null]}
+                onPress={() => {
+                    if (!canToggle || !col.localKey) return;
+                    toggleColumnVisibility(col.localKey);
+                }}
+                activeOpacity={canToggle ? 0.8 : 1}
             >
                 <View style={s.menuItemLeft}>
                     <Ionicons
@@ -821,7 +881,7 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                 />
             </TouchableOpacity>
         );
-    }, [columnVisibility, toggleColumnVisibility]);
+    }, [lockedColumnSet, toggleColumnVisibility]);
 
     useEffect(() => {
         if (!sortState.key) return;
@@ -962,6 +1022,21 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
         };
     }, [webResizingKey, applyColumnWidth]);
 
+    const updateTaskScreenCache = useCallback((
+        nextTasks: TaskListItem[],
+        nextColumns: TableColumn[],
+        nextColumnVisibility: Record<string, boolean>,
+        nextSortState: { key: string | null; direction: SortDirection }
+    ) => {
+        TASK_SCREEN_CACHE.set(mode, {
+            tasks: nextTasks,
+            actualColumns: nextColumns,
+            columnVisibility: nextColumnVisibility,
+            sortState: nextSortState,
+            timestamp: Date.now(),
+        });
+    }, [mode]);
+
     const fetchTasks = useCallback(async (showLoading = true) => {
         try {
             if (showLoading) setLoading(true);
@@ -985,82 +1060,76 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                 const response = await getUserSettings(gridSettingsType);
                 settings = response?.settings || null;
                 loadedSettingsRef.current = settings;
-                console.log(`[TaskList] Active grid settings type=${gridSettingsType} parsed settings:`, settings);
             } catch {
                 settings = null;
-                console.log(`[TaskList] Active grid settings type=${gridSettingsType} could not be loaded.`);
             }
             hasAttemptedSettingsLoadRef.current = true;
 
             const settingsColumnsRaw = (settings as any)?.columns ?? (settings as any)?.Columns;
             const settingsColumns = Array.isArray(settingsColumnsRaw) ? settingsColumnsRaw : [];
+            setSettingsColumnsForMenu(settingsColumns);
             const sortFromSettingsGlobal = parseSortFromSettings((settings as any)?.sort ?? (settings as any)?.Sort);
 
-            isApplyingSettingsRef.current = true;
-            setTasks(enrichedTasks);
-            setActualColumns((prev) => {
-                const widthByKey = new Map(prev.map((col) => [col.key, col.width]));
-                const base = BASE_COLUMNS.map((col) => ({
-                    ...col,
-                    width: widthByKey.get(col.key) ?? col.width,
-                }));
-                const dynamic = dynamicColumns.map((col) => ({
-                    ...col,
-                    width: widthByKey.get(col.key) ?? col.width,
-                }));
-                const merged = [...base, ...dynamic];
-                const settingsByLocalKey = new Map<string, any>();
-                settingsColumns.forEach((colSetting) => {
-                    const rawName = getColumnSettingKey(colSetting);
-                    if (!rawName) return;
-                    const localKey = resolveSettingsColumnKeyToLocalKey(rawName, merged);
-                    if (!localKey) return;
-                    settingsByLocalKey.set(localKey, colSetting);
-                });
+            const widthByKey = new Map(actualColumnsRef.current.map((col) => [col.key, col.width]));
+            const base = BASE_COLUMNS.map((col) => ({
+                ...col,
+                width: widthByKey.get(col.key) ?? col.width,
+            }));
+            const dynamic = dynamicColumns.map((col) => ({
+                ...col,
+                width: widthByKey.get(col.key) ?? col.width,
+            }));
+            const merged = [...base, ...dynamic];
+            const settingsByLocalKey = new Map<string, any>();
+            settingsColumns.forEach((colSetting) => {
+                const rawName = getColumnSettingKey(colSetting);
+                if (!rawName) return;
+                const localKey = resolveSettingsColumnKeyToLocalKey(rawName, merged);
+                if (!localKey) return;
+                settingsByLocalKey.set(localKey, colSetting);
+            });
 
-                const withSettings = merged.map((col, idx) => {
-                    const colSetting = settingsByLocalKey.get(col.key);
-                    return {
-                        column: {
-                            ...col,
-                            width: getColumnSettingWidth(colSetting) ?? col.width,
-                        },
-                        visible: getColumnSettingVisible(colSetting),
-                        order: getColumnSettingOrder(colSetting),
-                        fallbackOrder: idx,
-                    };
-                });
+            const withSettings = merged.map((col, idx) => {
+                const colSetting = settingsByLocalKey.get(col.key);
+                return {
+                    column: {
+                        ...col,
+                        width: getColumnSettingWidth(colSetting) ?? col.width,
+                    },
+                    visible: getColumnSettingVisible(colSetting),
+                    order: getColumnSettingOrder(colSetting),
+                    fallbackOrder: idx,
+                };
+            });
 
-                withSettings.sort((a, b) => {
-                    if (a.order === b.order) return a.fallbackOrder - b.fallbackOrder;
-                    return a.order - b.order;
-                });
+            withSettings.sort((a, b) => {
+                if (a.order === b.order) return a.fallbackOrder - b.fallbackOrder;
+                return a.order - b.order;
+            });
 
-                const finalColumns = withSettings.map((x) => x.column);
-                setColumnVisibility((prevVisibility) => {
-                    const next = { ...prevVisibility };
-                    withSettings.forEach((entry) => {
-                        const key = entry.column.key;
-                        if (entry.visible !== null) {
-                            next[key] = entry.visible;
-                            return;
-                        }
-                        if (next[key] === undefined) next[key] = true;
-                    });
-                    return next;
-                });
-                return finalColumns;
+            const finalColumns = withSettings.map((x) => x.column);
+            const nextColumnVisibility = { ...columnVisibilityRef.current };
+            withSettings.forEach((entry) => {
+                const key = entry.column.key;
+                if (entry.visible !== null) {
+                    nextColumnVisibility[key] = entry.visible;
+                    return;
+                }
+                if (nextColumnVisibility[key] === undefined) nextColumnVisibility[key] = true;
             });
 
             const sortFromSettingsColumns = parseSortFromSettingsColumns(settingsColumns, [
                 ...BASE_COLUMNS,
                 ...dynamicColumns,
             ]);
-            const sortFromSettings = sortFromSettingsGlobal || sortFromSettingsColumns;
-            if (sortFromSettings) {
-                setSortState(sortFromSettings);
-            }
+            const nextSortState = sortFromSettingsGlobal || sortFromSettingsColumns || { key: null, direction: null };
 
+            isApplyingSettingsRef.current = true;
+            setTasks(enrichedTasks);
+            setActualColumns(finalColumns);
+            setColumnVisibility(nextColumnVisibility);
+            setSortState(nextSortState);
+            updateTaskScreenCache(enrichedTasks, finalColumns, nextColumnVisibility, nextSortState);
             setTimeout(() => {
                 isApplyingSettingsRef.current = false;
             }, 0);
@@ -1075,17 +1144,26 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
             setLoading(false);
             setRefreshing(false);
         }
-    }, [enrichTasksWithJobData, gridSettingsType, mode]);
+    }, [enrichTasksWithJobData, gridSettingsType, mode, updateTaskScreenCache]);
 
     useFocusEffect(
         useCallback(() => {
-            fetchTasks();
-        }, [fetchTasks])
+            if (cachedSnapshot) {
+                applySnapshot(cachedSnapshot);
+                if (!isTaskScreenSnapshotFresh(cachedSnapshot)) {
+                    fetchTasks(false);
+                }
+                return;
+            }
+
+            fetchTasks(true);
+        }, [applySnapshot, cachedSnapshot, fetchTasks])
     );
 
     useEffect(() => {
         loadedSettingsRef.current = null;
         hasAttemptedSettingsLoadRef.current = false;
+        setSettingsColumnsForMenu([]);
     }, [gridSettingsType]);
 
     const saveGridSettingsNow = useCallback(async () => {
@@ -1115,13 +1193,16 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                 customWidgetId: null,
             });
             loadedSettingsRef.current = nextSettings;
-            console.log(`[TaskList] Grid settings saved for settingsType=${gridSettingsType}`);
+            updateTaskScreenCache(tasks, actualColumns, columnVisibility, {
+                key: sortState.key,
+                direction: sortState.direction,
+            });
         } catch (err: any) {
             console.log('[TaskList] Grid settings save failed:', err?.response?.status, err?.response?.data || err?.message);
         } finally {
             setIsSavingGrid(false);
         }
-    }, [actualColumns, columnVisibility, gridSettingsType, isSavingGrid, sortState]);
+    }, [actualColumns, columnVisibility, gridSettingsType, isSavingGrid, sortState, tasks, updateTaskScreenCache]);
 
     const getStateColor = (state: string | undefined) => {
         if (!state) return Colors.textMuted;
@@ -1212,7 +1293,7 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                         ) : (
                             <FlatList
                                 data={togglableColumns}
-                                keyExtractor={(item) => item.key}
+                                keyExtractor={(item) => item.id}
                                 renderItem={renderColumnToggleItem}
                                 contentContainerStyle={s.sideMenuContent}
                                 initialNumToRender={18}
@@ -1258,7 +1339,7 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                 <View style={s.errorBar}>
                     <Ionicons name="warning-outline" size={16} color="#fff" />
                     <Text style={s.errorText}>{error}</Text>
-                    <TouchableOpacity onPress={() => fetchTasks()}>
+                    <TouchableOpacity onPress={() => fetchTasks(true)}>
                         <Text style={s.retryText}>Retry</Text>
                     </TouchableOpacity>
                 </View>
@@ -1374,6 +1455,10 @@ export default function TaskListScreen({ onTaskPress, mode = 'active' }: Props) 
                                 <Text style={s.emptySubtext}>Pull down to refresh</Text>
                             </View>
                         }
+                        initialNumToRender={20}
+                        maxToRenderPerBatch={12}
+                        windowSize={8}
+                        removeClippedSubviews={Platform.OS !== 'web'}
                     />
                 </View>
             </ScrollView>
