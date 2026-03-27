@@ -165,6 +165,10 @@ function getTaskScreenSnapshot(mode: TaskScreenMode): TaskScreenSnapshot | null 
     return TASK_SCREEN_CACHE.get(mode) || null;
 }
 
+export function invalidateTaskScreenCache() {
+    TASK_SCREEN_CACHE.clear();
+}
+
 function isTaskScreenSnapshotFresh(snapshot: TaskScreenSnapshot | null): boolean {
     return !!snapshot && Date.now() - snapshot.timestamp < TASK_SCREEN_CACHE_TTL_MS;
 }

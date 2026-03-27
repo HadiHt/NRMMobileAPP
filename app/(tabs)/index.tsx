@@ -8,7 +8,7 @@ import {
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import TaskListScreen from '../../src/screens/TaskListScreen';
@@ -184,11 +184,22 @@ const DASHBOARD_SECTIONS: DashboardSection[] = [
 
 export default function TasksTab() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ view?: string }>();
   const navigation = useNavigation();
   const { width } = useWindowDimensions();
-  const [showTaskList, setShowTaskList] = useState(false);
-  const [taskListMode, setTaskListMode] = useState<'active' | 'completed'>('active');
+  const [showTaskList, setShowTaskList] = useState(params.view === 'tasks' || params.view === 'completed');
+  const [taskListMode, setTaskListMode] = useState<'active' | 'completed'>(params.view === 'completed' ? 'completed' : 'active');
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+  React.useEffect(() => {
+    if (params.view === 'tasks') {
+      setShowTaskList(true);
+      setTaskListMode('active');
+    } else if (params.view === 'completed') {
+      setShowTaskList(true);
+      setTaskListMode('completed');
+    }
+  }, [params.view]);
 
   React.useEffect(() => {
     const unsubscribe = navigation.addListener('tabPress', () => {

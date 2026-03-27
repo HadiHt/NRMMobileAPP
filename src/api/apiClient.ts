@@ -17,7 +17,6 @@ const apiClient: AxiosInstance = axios.create({
     baseURL: API_BASE_URL,
     timeout: 30000,
     headers: {
-        'Content-Type': 'application/json',
         Accept: 'application/json',
     },
 });
@@ -25,6 +24,12 @@ const apiClient: AxiosInstance = axios.create({
 // Request interceptor — attach Bearer token
 apiClient.interceptors.request.use(
     async (config: InternalAxiosRequestConfig) => {
+        // Important: do not force JSON content-type for multipart FormData uploads.
+        if (typeof FormData !== 'undefined' && config.data instanceof FormData && config.headers) {
+            delete (config.headers as any)['Content-Type'];
+            delete (config.headers as any)['content-type'];
+        }
+
         const token = await TokenStorage.getItemAsync(TOKEN_KEY);
         if (token && config.headers) {
             config.headers.Authorization = `Bearer ${token}`;

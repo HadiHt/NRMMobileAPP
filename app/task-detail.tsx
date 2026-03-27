@@ -19,6 +19,9 @@ export default function TaskDetailPage() {
         <TaskDetailScreen
             taskId={taskId}
             onBack={handleBack}
+            onFinalizeSuccess={() => {
+                router.replace({ pathname: '/(tabs)', params: { view: 'tasks' } });
+            }}
             onOpenInWebView={() => router.push({ pathname: '/(tabs)/forms', params: { taskId } })}
         />
     );

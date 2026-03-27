@@ -15,7 +15,9 @@ import { Colors, Typography, Spacing, BorderRadius } from '../theme';
 import { getTaskDetails } from '../api/taskService';
 import FormioInlineWebView from '../components/FormioInlineWebView';
 import TaskComments from '../components/TaskComments';
+import DocumentList from '../components/documents/DocumentList';
 import { acceptTask, finalizeTask } from '../api/taskService';
+import { invalidateTaskScreenCache } from './TaskListScreen';
 
 const extractFormioConfig = (webPart: any) => {
     if (!webPart) return null;
@@ -72,10 +74,11 @@ interface WebPart {
 interface Props {
     taskId: number;
     onBack: () => void;
+    onFinalizeSuccess?: () => void;
     onOpenInWebView: (taskId: number) => void;
 }
 
-export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Props) {
+export default function TaskDetailScreen({ taskId, onBack, onFinalizeSuccess, onOpenInWebView }: Props) {
     const [taskData, setTaskData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -141,6 +144,7 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
         try {
             setActionLoading(true);
             await acceptTask(taskId);
+            invalidateTaskScreenCache();
             showAlert('Success', 'Task has been accepted.');
             await fetchTask(); // Refresh to get new status
         } catch (err: any) {
@@ -206,13 +210,18 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
             console.log('=== FINALIZE: nextAction ===', finalizationActionName);
             console.log('=== FINALIZE: normalized nextTransition ===', JSON.stringify(normalizedTransition));
             const result = await finalizeTask(taskId, finalizePayload);
+            invalidateTaskScreenCache();
             showAlert('Success', 'Task has been finalized.');
             // If a new task was created (next in flow), navigate to it
             if (result?.newTaskId || result?.nextTaskId) {
                 const nextId = result.newTaskId || result.nextTaskId;
                 showAlert('Next Task', `A new task #${nextId} has been created.`);
             }
-            onBack();
+            if (onFinalizeSuccess) {
+                onFinalizeSuccess();
+            } else {
+                onBack();
+            }
             return;
         } catch (err: any) {
             console.error('Failed to finalize task', err);
@@ -338,6 +347,25 @@ export default function TaskDetailScreen({ taskId, onBack, onOpenInWebView }: Pr
                                 return (
                                     <View style={styles.formioSection}>
                                         <TaskComments taskId={taskId} jobId={taskData?.job?.id} readOnly={isReadOnly || activeWebPart.readOnly} />
+                                    </View>
+                                );
+                            }
+
+                            const isDocumentWebPart =
+                                activeWebPart.name?.toLowerCase().includes('document') ||
+                                activeWebPart.tabName?.toLowerCase().includes('doc') ||
+                                activeWebPart.type === 'documents' ||
+                                activeWebPart.name === 'WP_Documents';
+
+                            if (isDocumentWebPart) {
+                                return (
+                                    <View style={styles.formioSection}>
+                                        <DocumentList 
+                                            taskId={taskId} 
+                                            jobId={taskData?.job?.id} 
+                                            taskTypeId={taskData?.taskType?.id} 
+                                            readOnly={isReadOnly || activeWebPart.readOnly} 
+                                        />
                                     </View>
                                 );
                             }
